@@ -1,0 +1,27 @@
+[project]
+name = "otterball-v2"
+version = "0.1.0"
+requires-python = ">=3.14"
+dependencies = [
+    "aiolimiter",
+    "basedpyright",
+    "black",
+    "celery",
+    "celery-types",
+    "discord-py",
+    "django",
+    "django-celery-beat",
+    "django-celery-results",
+    "django-redis",
+    "django-stubs",
+    "gunicorn",
+    "httpx2",
+    "pillow",
+    "psycopg2-binary",
+    "pydantic",
+    "pyrefly",
+    "redis",
+    "rich",
+    "uuid",
+    "whitenoise",
+]
