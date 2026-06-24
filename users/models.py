@@ -7,8 +7,9 @@ from django.db import models
 
 if TYPE_CHECKING:
     from django.db.models.fields.related_descriptors import RelatedManager
-    from predictions.models import Prediction
+
     from discord_bot.models import DiscordProfile
+    from predictions.models import Prediction
 
 
 # Create your models here.

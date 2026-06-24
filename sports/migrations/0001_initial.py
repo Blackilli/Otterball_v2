@@ -162,11 +162,7 @@ class Migration(migrations.Migration):
                 ("color", models.CharField(default="#60669c", max_length=9)),
             ],
             options={
-                "indexes": [
-                    models.Index(
-                        fields=["name", "sport"], name="sports_team_name_2572d1_idx"
-                    )
-                ],
+                "indexes": [models.Index(fields=["name", "sport"], name="sports_team_name_2572d1_idx")],
             },
         ),
         migrations.CreateModel(
@@ -416,9 +412,7 @@ class Migration(migrations.Migration):
         ),
         migrations.AddIndex(
             model_name="match",
-            index=models.Index(
-                fields=["status", "kickoff"], name="sports_matc_status_09ed92_idx"
-            ),
+            index=models.Index(fields=["status", "kickoff"], name="sports_matc_status_09ed92_idx"),
         ),
         migrations.AlterUniqueTogether(
             name="teammapping",

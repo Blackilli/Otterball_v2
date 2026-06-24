@@ -5,11 +5,11 @@ from django.core.management.base import BaseCommand
 
 from sports.services.ingestion import (
     ingest_all_fifa_competitions,
+    ingest_fifa_live_matches,
     ingest_fifa_national_teams,
     ingest_fifa_seasons,
-    ingest_upcoming_matches,
     ingest_fifa_stages,
-    ingest_fifa_live_matches,
+    ingest_upcoming_matches,
 )
 
 logger = logging.getLogger(__name__)
@@ -66,9 +66,7 @@ class Command(BaseCommand):
             self.stdout.write(self.style.WARNING("Syncing FIFA competitions..."))
             try:
                 asyncio.run(ingest_all_fifa_competitions())
-                self.stdout.write(
-                    self.style.SUCCESS("Competitions synced successfully.")
-                )
+                self.stdout.write(self.style.SUCCESS("Competitions synced successfully."))
             except Exception as e:
                 logger.exception("FIFA competition mass-ingestion failed.")
                 self.stderr.write(self.style.ERROR(f"Sync failed: {e}"))
@@ -94,9 +92,7 @@ class Command(BaseCommand):
             self.stdout.write(self.style.WARNING("Syncing upcoming matches..."))
             try:
                 asyncio.run(ingest_upcoming_matches())
-                self.stdout.write(
-                    self.style.SUCCESS("Upcoming matches synced successfully.")
-                )
+                self.stdout.write(self.style.SUCCESS("Upcoming matches synced successfully."))
             except Exception as e:
                 logger.exception("FIFA upcoming match mass-ingestion failed.")
                 self.stderr.write(self.style.ERROR(f"Sync failed: {e}"))
@@ -105,9 +101,7 @@ class Command(BaseCommand):
             self.stdout.write(self.style.WARNING("Syncing live matches..."))
             try:
                 asyncio.run(ingest_fifa_live_matches())
-                self.stdout.write(
-                    self.style.SUCCESS("Live matches synced successfully.")
-                )
+                self.stdout.write(self.style.SUCCESS("Live matches synced successfully."))
             except Exception as e:
                 logger.exception("FIFA live match mass-ingestion failed.")
                 self.stderr.write(self.style.ERROR(f"Sync failed: {e}"))

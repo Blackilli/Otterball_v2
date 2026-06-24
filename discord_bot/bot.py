@@ -29,12 +29,12 @@ class OtterBallBot(commands.Bot):
         logger.info("Initializing bot cogs...")
         from discord_bot.cogs import (
             ChannelSyncCog,
+            LeaderboardSyncCog,
+            PollCreationCog,
             PollPredictionCog,
             ReconciliationCog,
-            RoleSyncCog,
-            PollCreationCog,
-            LeaderboardSyncCog,
             RemoveGarbageCog,
+            RoleSyncCog,
         )
 
         await self.add_cog(PollCreationCog(self))

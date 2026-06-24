@@ -5,7 +5,7 @@ from discord.ext import commands, tasks
 from django.utils import timezone
 
 from discord_bot.models import DiscordGuildPool, DiscordProfile
-from predictions.models import Prediction, PoolStageRule
+from predictions.models import PoolStageRule, Prediction
 from users.models import User
 
 logger = logging.getLogger(__name__)
@@ -18,9 +18,9 @@ class LeaderboardSyncCog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_ready(self):
-        async for db_guild_pool in DiscordGuildPool.objects.filter(
-            is_active=True
-        ).select_related("pool", "pool__season"):
+        async for db_guild_pool in DiscordGuildPool.objects.filter(is_active=True).select_related(
+            "pool", "pool__season"
+        ):
             if db_guild_pool.leaderboard_msg:
                 await self.update_leaderboard_msg(db_guild_pool)
                 continue
@@ -28,17 +28,13 @@ class LeaderboardSyncCog(commands.Cog):
             if not guild:
                 guild = await self.bot.fetch_guild(db_guild_pool.guild_id)
                 if not guild:
-                    logger.warning(
-                        f"Guild {db_guild_pool.guild_id} not found, skipping."
-                    )
+                    logger.warning(f"Guild {db_guild_pool.guild_id} not found, skipping.")
                     continue
             channel = guild.get_channel(db_guild_pool.channel_id)
             if not channel:
                 channel = await guild.fetch_channel(db_guild_pool.channel_id)
                 if not isinstance(channel, discord.abc.Messageable):
-                    logger.warning(
-                        f"Channel {db_guild_pool.channel_id} not found, skipping."
-                    )
+                    logger.warning(f"Channel {db_guild_pool.channel_id} not found, skipping.")
                     continue
 
             msg = await channel.send("Leaderboard\n-# soon™")
@@ -50,8 +46,7 @@ class LeaderboardSyncCog(commands.Cog):
 
     async def update_leaderboard_msg(self, guild_pool: DiscordGuildPool):
         user_cache = {
-            profile.user_id: profile
-            async for profile in DiscordProfile.objects.filter(user__is_active=True)
+            profile.user_id: profile async for profile in DiscordProfile.objects.filter(user__is_active=True)
         }
         if not guild_pool.leaderboard_msg:
             return
@@ -68,9 +63,7 @@ class LeaderboardSyncCog(commands.Cog):
         msg = await channel.fetch_message(guild_pool.leaderboard_msg)
 
         if not msg:
-            logger.warning(
-                f"Leaderboard message {guild_pool.leaderboard_msg} not found, skipping."
-            )
+            logger.warning(f"Leaderboard message {guild_pool.leaderboard_msg} not found, skipping.")
         if not msg.pinned:
             await msg.pin()
 
@@ -101,16 +94,11 @@ class LeaderboardSyncCog(commands.Cog):
 
             if last_displayed_rank < 10 and rank > last_displayed_rank + 1:
                 for r in range(last_displayed_rank + 1, min(rank, 11)):
-                    leaderboard_embed.add_field(
-                        name=f"{r}.", value=" ----- ", inline=True
-                    )
+                    leaderboard_embed.add_field(name=f"{r}.", value=" ----- ", inline=True)
                 last_displayed_rank = rank
 
             if rank <= 10:
-                if (
-                    len(leaderboard_embed.fields) > 0
-                    and leaderboard_embed.fields[-1].name == f"{rank}."
-                ):
+                if len(leaderboard_embed.fields) > 0 and leaderboard_embed.fields[-1].name == f"{rank}.":
                     current_val = leaderboard_embed.fields[-1].value
                     if len(current_val) + len(field_value) < 1000:
                         leaderboard_embed.set_field_at(
@@ -129,10 +117,7 @@ class LeaderboardSyncCog(commands.Cog):
                 last_displayed_rank = rank
             else:
                 field_value = f"{rank}.: {field_value}"
-                if (
-                    len(leaderboard_embed.fields) > 0
-                    and leaderboard_embed.fields[-1].name == "Plebs"
-                ):
+                if len(leaderboard_embed.fields) > 0 and leaderboard_embed.fields[-1].name == "Plebs":
                     current_val = leaderboard_embed.fields[-1].value
 
                     if len(current_val) + len(field_value) < 1000:

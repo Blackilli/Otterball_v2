@@ -36,15 +36,11 @@ class Migration(migrations.Migration):
         ),
         migrations.AddIndex(
             model_name="activematchmessage",
-            index=models.Index(
-                fields=["poll_message_id"], name="discord_bot_poll_me_9857d7_idx"
-            ),
+            index=models.Index(fields=["poll_message_id"], name="discord_bot_poll_me_9857d7_idx"),
         ),
         migrations.AddIndex(
             model_name="activematchmessage",
-            index=models.Index(
-                fields=["ticker_message_id"], name="discord_bot_ticker__b892fd_idx"
-            ),
+            index=models.Index(fields=["ticker_message_id"], name="discord_bot_ticker__b892fd_idx"),
         ),
         migrations.AlterUniqueTogether(
             name="activematchmessage",

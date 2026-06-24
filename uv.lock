@@ -452,6 +452,18 @@ wheels = [
 ]
 
 [[package]]
+name = "django-upgrade"
+version = "1.30.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "tokenize-rt" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/a3/a5/c59b2123ad588fd52ce69e043e47185a54d1d9966f29ecb50d1cf65861ca/django_upgrade-1.30.0.tar.gz", hash = "sha256:c2c9a02773708c5b4fc24ebf29f2c532082885170d1ab17a2ef33f396893dd8a", size = 39652, upload-time = "2026-02-24T23:19:45.091Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/aa/1f/58c990ab604a5b39b6d1c83f18aa074bfb10eef201c833697d44176d78cd/django_upgrade-1.30.0-py3-none-any.whl", hash = "sha256:3cf6eb4a46918df3f0b863bd96df8a36a8fed90d0e17c6a7c4af5442e489bc46", size = 68910, upload-time = "2026-02-24T23:19:43.65Z" },
+]
+
+[[package]]
 name = "filelock"
 version = "3.29.4"
 source = { registry = "https://pypi.org/simple" }
@@ -566,6 +578,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/cd/63/9496c57188a2ee585e0f1db071d75089a11e98aa86eb99d9d7618fc1edce/idna-3.18.tar.gz", hash = "sha256:ffb385a7e039654cef1ab9ef32c6fafe283c0c0467bba1d9029738ce4a14a848", size = 196711, upload-time = "2026-06-02T14:34:07.794Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/1e/5e/d4e9f1a599fb8e573b7b87160658329fbf28d19eac2718f51fc3def3aa5a/idna-3.18-py3-none-any.whl", hash = "sha256:7f952cbe720b688055e3f87de14f5c3e5fdaa8bc3928985c4077ca689de849a2", size = 65455, upload-time = "2026-06-02T14:34:06.319Z" },
+]
+
+[[package]]
+name = "isort"
+version = "8.0.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/ef/7c/ec4ab396d31b3b395e2e999c8f46dec78c5e29209fac49d1f4dace04041d/isort-8.0.1.tar.gz", hash = "sha256:171ac4ff559cdc060bcfff550bc8404a486fee0caab245679c2abe7cb253c78d", size = 769592, upload-time = "2026-02-28T10:08:20.685Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3e/95/c7c34aa53c16353c56d0b802fba48d5f5caa2cdee7958acbcb795c830416/isort-8.0.1-py3-none-any.whl", hash = "sha256:28b89bc70f751b559aeca209e6120393d43fbe2490de0559662be7a9787e3d75", size = 89733, upload-time = "2026-02-28T10:08:19.466Z" },
 ]
 
 [[package]]
@@ -713,7 +734,10 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "django-upgrade" },
+    { name = "isort" },
     { name = "pre-commit" },
+    { name = "yamllint" },
 ]
 
 [package.metadata]
@@ -742,7 +766,12 @@ requires-dist = [
 ]
 
 [package.metadata.requires-dev]
-dev = [{ name = "pre-commit", specifier = ">=4.6.0" }]
+dev = [
+    { name = "django-upgrade", specifier = ">=1.30.0" },
+    { name = "isort", specifier = ">=8.0.1" },
+    { name = "pre-commit", specifier = ">=4.6.0" },
+    { name = "yamllint", specifier = ">=1.38.0" },
+]
 
 [[package]]
 name = "packaging"
@@ -1098,6 +1127,15 @@ wheels = [
 ]
 
 [[package]]
+name = "tokenize-rt"
+version = "6.2.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/69/ed/8f07e893132d5051d86a553e749d5c89b2a4776eb3a579b72ed61f8559ca/tokenize_rt-6.2.0.tar.gz", hash = "sha256:8439c042b330c553fdbe1758e4a05c0ed460dbbbb24a606f11f0dee75da4cad6", size = 5476, upload-time = "2025-05-23T23:48:00.035Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/33/f0/3fe8c6e69135a845f4106f2ff8b6805638d4e85c264e70114e8126689587/tokenize_rt-6.2.0-py2.py3-none-any.whl", hash = "sha256:a152bf4f249c847a66497a4a95f63376ed68ac6abf092a2f7cfb29d044ecff44", size = 6004, upload-time = "2025-05-23T23:47:58.812Z" },
+]
+
+[[package]]
 name = "truststore"
 version = "0.10.4"
 source = { registry = "https://pypi.org/simple" }
@@ -1203,6 +1241,19 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/cb/2a/55b3f3a4ec326cd077c1c3defeee656b9298372a69229134d930151acd01/whitenoise-6.12.0.tar.gz", hash = "sha256:f723ebb76a112e98816ff80fcea0a6c9b8ecde835f8ddda25df7a30a3c2db6ad", size = 26841, upload-time = "2026-02-27T00:05:42.028Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/db/eb/d5583a11486211f3ebd4b385545ae787f32363d453c19fffd81106c9c138/whitenoise-6.12.0-py3-none-any.whl", hash = "sha256:fc5e8c572e33ebf24795b47b6a7da8da3c00cff2349f5b04c02f28d0cc5a3cc2", size = 20302, upload-time = "2026-02-27T00:05:40.086Z" },
+]
+
+[[package]]
+name = "yamllint"
+version = "1.38.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pathspec" },
+    { name = "pyyaml" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/28/a0/8fc2d68e132cf918f18273fdc8a1b8432b60d75ac12fdae4b0ef5c9d2e8d/yamllint-1.38.0.tar.gz", hash = "sha256:09e5f29531daab93366bb061e76019d5e91691ef0a40328f04c927387d1d364d", size = 142446, upload-time = "2026-01-13T07:47:53.276Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/05/92/aed08e68de6e6a3d7c2328ce7388072cd6affc26e2917197430b646aed02/yamllint-1.38.0-py3-none-any.whl", hash = "sha256:fc394a5b3be980a4062607b8fdddc0843f4fa394152b6da21722f5d59013c220", size = 68940, upload-time = "2026-01-13T07:47:51.343Z" },
 ]
 
 [[package]]

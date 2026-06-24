@@ -19,12 +19,7 @@ class Command(BaseCommand):
 
     async def async_handle(self, *args, **options):
         pool = await PredictionPool.objects.aget(id=options["pool_id"])
-        print(
-            {
-                user.username: points
-                async for user, points in pool.aget_user_with_points()
-            }
-        )
+        print({user.username: points async for user, points in pool.aget_user_with_points()})
 
     def handle(self, *args, **options):
         asyncio.run(self.async_handle(*args, **options))

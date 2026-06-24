@@ -5,14 +5,11 @@ from enum import IntEnum, StrEnum
 from typing import Any, AsyncGenerator
 
 import httpx2
-from PIL import Image
-from PIL.ImageFile import ImageFile
 from aiolimiter import AsyncLimiter
 from httpx2 import Response
-from pydantic import BaseModel
-from pydantic import Field
-from pydantic import TypeAdapter
-from pydantic import field_validator, ValidationError
+from PIL import Image
+from PIL.ImageFile import ImageFile
+from pydantic import BaseModel, Field, TypeAdapter, ValidationError, field_validator
 
 logger = logging.getLogger(__name__)
 
@@ -430,18 +427,10 @@ class Language(BaseModel):
     three_letter_language_code: str | None = Field(..., alias="ThreeLetterLanguageCode")
     descriptions: list[LocaleDescription] | None = Field(None, alias="Descriptions")
     enabled: bool | None = Field(None, alias="Enabled")
-    can_be_used_to_send_push_notifications: bool | None = Field(
-        None, alias="CanBeUsedToSendPushNotifications"
-    )
-    can_be_used_as_web_api_language: bool | None = Field(
-        None, alias="CanBeUsedAsWebApiLanguage"
-    )
-    can_be_used_for_general_purposes: bool | None = Field(
-        None, alias="CanBeUsedForGeneralPurposes"
-    )
-    ca_be_used_for_newsletters: bool | None = Field(
-        None, alias="CanBeUsedForNewsletters"
-    )
+    can_be_used_to_send_push_notifications: bool | None = Field(None, alias="CanBeUsedToSendPushNotifications")
+    can_be_used_as_web_api_language: bool | None = Field(None, alias="CanBeUsedAsWebApiLanguage")
+    can_be_used_for_general_purposes: bool | None = Field(None, alias="CanBeUsedForGeneralPurposes")
+    ca_be_used_for_newsletters: bool | None = Field(None, alias="CanBeUsedForNewsletters")
     web_api_culture_to_use: str | None = Field(None, alias="WebApiCultureToUse")
     properties: dict | None = Field(None, alias="Properties")
     is_updateable: bool | None = Field(None, alias="IsUpdateable")
@@ -492,42 +481,30 @@ class OrganizationMember(BaseModel):
     date_of_birth: datetime.date | None = Field(None, alias="DateOfBirth")
     country: str | None = Field(None, alias="Country")
     role: ConfederationRole | None = Field(None, alias="Role")
-    role_type_description: list[LocaleDescription] | None = Field(
-        None, alias="RoleTypeDescription"
-    )
+    role_type_description: list[LocaleDescription] | None = Field(None, alias="RoleTypeDescription")
     role_begin_date: datetime.datetime | None = Field(None, alias="RoleBeginDate")
     role_end_date: datetime.datetime | None = Field(None, alias="RoleEndDate")
-    organization_begin_date: datetime.datetime | None = Field(
-        None, alias="OrganizationBeginDate"
-    )
+    organization_begin_date: datetime.datetime | None = Field(None, alias="OrganizationBeginDate")
 
 
 class Confederation(BaseModel):
     id_confederation: str = Field(..., alias="IdConfederation")
     name: list[LocaleDescription] | None = Field(None, alias="Name")
-    confederation_acronym: list[LocaleDescription] | None = Field(
-        None, alias="ConfederationAcronym"
-    )
+    confederation_acronym: list[LocaleDescription] | None = Field(None, alias="ConfederationAcronym")
     picture_url: str | None = Field(None, alias="PictureUrl")
     dark_picture_url: str | None = Field(None, alias="DarkPictureUrl")
     thumbnail_picture_url: str | None = Field(None, alias="ThumbnailPictureUrl")
     description: list[LocaleDescription] | None = Field(None, alias="Description")
     web_site: str | None = Field(None, alias="WebSite")
     address: str | None = Field(None, alias="Address")
-    address_localized: list[LocaleDescription] | None = Field(
-        None, alias="AddressLocalized"
-    )
+    address_localized: list[LocaleDescription] | None = Field(None, alias="AddressLocalized")
     city_name: str | None = Field(None, alias="CityName")
-    city_name_localized: list[LocaleDescription] | None = Field(
-        None, alias="CityNameLocalized"
-    )
+    city_name_localized: list[LocaleDescription] | None = Field(None, alias="CityNameLocalized")
     country: str | None = Field(None, alias="Country")
     contact_business_phone: str | None = Field(None, alias="ContactBusinessPhone")
     contact_email: str | None = Field(None, alias="ContactEmail")
     contact_fax: str | None = Field(None, alias="ContactFax")
-    contact_media_communications_phone: str | None = Field(
-        None, alias="ContactMediaCommunicationsPhone"
-    )
+    contact_media_communications_phone: str | None = Field(None, alias="ContactMediaCommunicationsPhone")
     location_picture: str | None = Field(None, alias="LocationPicture")
     order_position: int | None = Field(None, alias="OrderPosition")
     organization: list[OrganizationMember] | None = Field(None, alias="Organization")
@@ -580,9 +557,7 @@ class WhereToWatchMatch(BaseModel):
     id_season: str | None = Field(None, alias="IdSeason")
     id_competition: str | None = Field(None, alias="IdCompetition")
     id_country: str | None = Field(None, alias="IdCountry")
-    id_country_iso_3166_alpha_2: str | None = Field(
-        None, alias="IdCountryIso3166Alpha2"
-    )
+    id_country_iso_3166_alpha_2: str | None = Field(None, alias="IdCountryIso3166Alpha2")
     country_name: list[LocaleDescription] | None = Field(None, alias="CountryName")
     matches: list[WhereToWatchMatchBasic] | None = Field(None, alias="Matches")
 
@@ -605,9 +580,7 @@ class CompetitionSeasonStatistics(BaseModel):
 
 class CompetitionStatistics(BaseModel):
     id_competition: str | None = Field(None, alias="IdCompetition")
-    season_stats: list[CompetitionSeasonStatistics] | None = Field(
-        None, alias="SeasonStats"
-    )
+    season_stats: list[CompetitionSeasonStatistics] | None = Field(None, alias="SeasonStats")
 
 
 class PossessionLastX(BaseModel):
@@ -679,13 +652,9 @@ class CompetitionMatch(BaseModel):
     id_match: str | None = Field(None, alias="IdMatch")
     stage_name: list[LocaleDescription] | None = Field(None, alias="StageName")
     group_name: list[LocaleDescription] | None = Field(None, alias="GroupName")
-    competition_name: list[LocaleDescription] | None = Field(
-        None, alias="CompetitionName"
-    )
+    competition_name: list[LocaleDescription] | None = Field(None, alias="CompetitionName")
     season_name: list[LocaleDescription] | None = Field(None, alias="SeasonName")
-    season_short_name: list[LocaleDescription] | None = Field(
-        None, alias="SeasonShortName"
-    )
+    season_short_name: list[LocaleDescription] | None = Field(None, alias="SeasonShortName")
     date: datetime.datetime | None = Field(None, alias="Date")
     local_date: datetime.datetime | None = Field(None, alias="LocalDate")
     home: MatchTeam | None = Field(None, alias="Home")
@@ -827,13 +796,9 @@ class LiveMatch(BaseModel):
     id_season: str = Field(..., alias="IdSeason")
     coverage_level: CoverageLevel | None = Field(None, alias="CoverageLevel")
     id_competition: str = Field(..., alias="IdCompetition")
-    competition_name: list[LocaleDescription] | None = Field(
-        None, alias="CompetitionName"
-    )
+    competition_name: list[LocaleDescription] | None = Field(None, alias="CompetitionName")
     season_name: list[LocaleDescription] | None = Field(None, alias="SeasonName")
-    season_short_name: list[LocaleDescription] | None = Field(
-        None, alias="SeasonShortName"
-    )
+    season_short_name: list[LocaleDescription] | None = Field(None, alias="SeasonShortName")
     stadium: Stadium | None = Field(None, alias="Stadium")
     result_type: ResultType | None = Field(None, alias="ResultType")
     match_day: str | None = Field(None, alias="MatchDay")
@@ -856,19 +821,13 @@ class LiveMatch(BaseModel):
     home_team: LiveMatchTeam | None = Field(None, alias="HomeTeam")
     away_team: LiveMatchTeam | None = Field(None, alias="AwayTeam")
     ball_possession: Possession | None = Field(None, alias="BallPossession")
-    territorial_possession: Possession | None = Field(
-        None, alias="TerritorialPossession"
-    )
-    territorial_third_possession: Possession | None = Field(
-        None, alias="TerritorialThirdPossession"
-    )
+    territorial_possession: Possession | None = Field(None, alias="TerritorialPossession")
+    territorial_third_possession: Possession | None = Field(None, alias="TerritorialThirdPossession")
     officials: list[MatchOfficial] | None = Field(None, alias="Officials")
     match_status: MatchStatus | None = Field(None, alias="MatchStatus")
     group_name: list[LocaleDescription] | None = Field(None, alias="GroupName")
     stage_name: list[LocaleDescription] | None = Field(None, alias="StageName")
-    officiality_status: OfficialityStatus | None = Field(
-        None, alias="OfficialityStatus"
-    )
+    officiality_status: OfficialityStatus | None = Field(None, alias="OfficialityStatus")
     time_defined: bool | None = Field(None, alias="TimeDefined")
     properties: dict | None = Field(None, alias="Properties")
     is_updateable: bool | None = Field(None, alias="IsUpdateable")
@@ -919,9 +878,7 @@ class FifaClient:
     def client(self) -> httpx2.AsyncClient:
         """Prüft den Zustand und gibt den Client zurück."""
         if self._client is None:
-            raise RuntimeError(
-                "Der Client muss innerhalb eines 'async with'-Blocks genutzt werden!"
-            )
+            raise RuntimeError("Der Client muss innerhalb eines 'async with'-Blocks genutzt werden!")
         return self._client
 
     async def _get_paginated_results[T](
@@ -951,9 +908,7 @@ class FifaClient:
             else:
                 headers.pop("x-mdp-continuation-token", None)
 
-            response: Response = await self.client.get(
-                url=url, params=params, headers=headers, **kwargs
-            )
+            response: Response = await self.client.get(url=url, params=params, headers=headers, **kwargs)
             response.raise_for_status()
             page = adapter.validate_python(response.json())
             if not page.results:
@@ -1313,9 +1268,7 @@ class FifaClient:
     ) -> AsyncGenerator[ImageFile]:
         for url in urls:
             try:
-                response: Response = await self.client.get(
-                    url.format(format=format.value, size=size.value)
-                )
+                response: Response = await self.client.get(url.format(format=format.value, size=size.value))
                 response.raise_for_status()
 
                 yield Image.open(io.BytesIO(response.content))
@@ -1346,12 +1299,8 @@ class FifaClient:
 
         return adapter.validate_python(response.json())
 
-    async def get_competition_seasons(
-        self, competition_id: str
-    ) -> AsyncGenerator[Season]:
-        comp_stats = await self.get_competitionstatistics_by_competition_id(
-            competition_id
-        )
+    async def get_competition_seasons(self, competition_id: str) -> AsyncGenerator[Season]:
+        comp_stats = await self.get_competitionstatistics_by_competition_id(competition_id)
         if not comp_stats or not comp_stats.season_stats:
             return
         for season_stat in comp_stats.season_stats:

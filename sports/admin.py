@@ -2,16 +2,16 @@ from django.contrib import admin
 from django.utils.html import format_html
 
 from sports.models import (
-    Stage,
-    Season,
-    Match,
     Competition,
-    Team,
-    SeasonMapping,
-    StageMapping,
     CompetitionMapping,
-    TeamMapping,
+    Match,
     MatchMapping,
+    Season,
+    SeasonMapping,
+    Stage,
+    StageMapping,
+    Team,
+    TeamMapping,
 )
 
 

@@ -4,11 +4,11 @@ from celery import shared_task
 
 from sports.services.ingestion import (
     ingest_all_fifa_competitions,
+    ingest_fifa_live_matches,
     ingest_fifa_national_teams,
     ingest_fifa_seasons,
-    ingest_upcoming_matches,
-    ingest_fifa_live_matches,
     ingest_fifa_stages,
+    ingest_upcoming_matches,
 )
 
 logger = logging.getLogger(__name__)

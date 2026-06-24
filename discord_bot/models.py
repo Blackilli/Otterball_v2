@@ -4,8 +4,8 @@ from django.conf import settings
 from django.db import models
 
 if TYPE_CHECKING:
-    from sports.models import Match
     from predictions.models import PredictionPool
+    from sports.models import Match
     from users.models import User
 
 
@@ -160,7 +160,5 @@ class DiscordGuildPool(models.Model):
 
 class DiscordTeamEmoji(models.Model):
     id = models.BigIntegerField(primary_key=True, unique=True)
-    team = models.OneToOneField(
-        "sports.Team", on_delete=models.CASCADE, related_name="emoji"
-    )
+    team = models.OneToOneField("sports.Team", on_delete=models.CASCADE, related_name="emoji")
     name = models.CharField(max_length=100)

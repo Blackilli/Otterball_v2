@@ -5,11 +5,11 @@ from discord.ext import commands
 
 from discord_bot.constants import DISCORD_POLL_MAP
 from discord_bot.models import (
-    DiscordProfile,
     ActiveMatchMessage,
-    DiscordGuild,
     DiscordChannel,
+    DiscordGuild,
     DiscordGuildRole,
+    DiscordProfile,
 )
 from predictions.models import Prediction
 from users.models import User
@@ -55,7 +55,9 @@ class ReconciliationCog(commands.Cog):
                 await DiscordChannel.objects.filter(
                     guild_id=guild_row.id,
                     is_active=True,
-                ).exclude(id__in=live_channel_ids,).aupdate(is_active=False)
+                ).exclude(
+                    id__in=live_channel_ids,
+                ).aupdate(is_active=False)
 
     async def reconcile_roles(self):
         for guild in self.bot.guilds:
@@ -82,7 +84,9 @@ class ReconciliationCog(commands.Cog):
                 await DiscordChannel.objects.filter(
                     guild_id=guild_row.id,
                     is_active=True,
-                ).exclude(id__in=live_role_ids,).aupdate(is_active=False)
+                ).exclude(
+                    id__in=live_role_ids,
+                ).aupdate(is_active=False)
 
     async def reconcile_active_polls(self):
         discord_profile_cache = {
@@ -94,9 +98,7 @@ class ReconciliationCog(commands.Cog):
 
         predictions_to_sync = []
 
-        async for match_msg in ActiveMatchMessage.objects.filter(
-            is_poll_finalized=False
-        ).aiterator():
+        async for match_msg in ActiveMatchMessage.objects.filter(is_poll_finalized=False).aiterator():
             try:
                 channel = self.bot.get_channel(match_msg.channel_id)
                 if not channel:
@@ -121,12 +123,8 @@ class ReconciliationCog(commands.Cog):
                     async for voter in answer.voters():
                         profile = discord_profile_cache.get(voter.id)
                         if not profile:
-                            logger.info(
-                                f"Creating user for Discord ID: {voter.id} ({voter.name})"
-                            )
-                            user = await User.objects.acreate_user(
-                                username=voter.name, is_active=True
-                            )
+                            logger.info(f"Creating user for Discord ID: {voter.id} ({voter.name})")
+                            user = await User.objects.acreate_user(username=voter.name, is_active=True)
                             profile = await DiscordProfile.objects.acreate(
                                 user=user,
                                 id=voter.id,
@@ -162,6 +160,4 @@ class ReconciliationCog(commands.Cog):
             )
             synced_count += 1
 
-        logger.info(
-            f"Reconciliation complete. Successfully synchronized {synced_count} live votes."
-        )
+        logger.info(f"Reconciliation complete. Successfully synchronized {synced_count} live votes.")

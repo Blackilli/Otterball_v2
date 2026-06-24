@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from predictions.models import Prediction, PredictionPool, PoolStageRule
+from predictions.models import PoolStageRule, Prediction, PredictionPool
 
 # Register your models here.
 

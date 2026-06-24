@@ -1,25 +1,57 @@
+---
 default_install_hook_types:
   - pre-commit
   - post-checkout
   - post-merge
   - post-rewrite
 
+
+default_language_version:
+  python: python3.14
+
+
 repos:
-- repo: https://github.com/pre-commit/pre-commit-hooks
-  rev: v2.3.0
-  hooks:
-  - id: check-yaml
-  - id: end-of-file-fixer
-  - id: trailing-whitespace
-
-- repo: https://github.com/psf/black
-  rev: 26.5.1
-  hooks:
-  - id: black
-
-- repo: https://github.com/astral-sh/uv-pre-commit
-  # uv version.
-  rev: 0.11.24
-  hooks:
-    - id: uv-lock
-    - id: uv-sync
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-yaml
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+  - repo: https://github.com/asottile/pyupgrade
+    rev: v3.21.2
+    hooks:
+      - id: pyupgrade
+  - repo: https://github.com/adamchainz/django-upgrade
+    rev: 1.30.0
+    hooks:
+      - id: django-upgrade
+  - repo: https://github.com/lyz-code/yamlfix/
+    rev: 1.19.1
+    hooks:
+      - id: yamlfix
+  - repo: https://github.com/psf/black
+    rev: 26.5.1
+    hooks:
+      - id: black
+  - repo: https://github.com/pycqa/isort
+    rev: 9.0.0a3
+    hooks:
+      - id: isort
+        name: isort (python)
+  - repo: https://github.com/astral-sh/uv-pre-commit
+    rev: 0.11.24
+    hooks:
+      - id: uv-lock
+      - id: uv-sync
+  - repo: local
+    hooks:
+      - id: django-test
+        name: django-test
+        entry: uv run manage.py test
+        always_run: true
+        pass_filenames: false
+        language: system
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.0
+    hooks:
+      - id: gitleaks

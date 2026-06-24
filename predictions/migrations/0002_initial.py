@@ -54,15 +54,11 @@ class Migration(migrations.Migration):
         ),
         migrations.AddIndex(
             model_name="prediction",
-            index=models.Index(
-                fields=["pool", "is_processed"], name="predictions_pool_id_01023b_idx"
-            ),
+            index=models.Index(fields=["pool", "is_processed"], name="predictions_pool_id_01023b_idx"),
         ),
         migrations.AddIndex(
             model_name="prediction",
-            index=models.Index(
-                fields=["pool", "points_awarded"], name="predictions_pool_id_e7e9d5_idx"
-            ),
+            index=models.Index(fields=["pool", "points_awarded"], name="predictions_pool_id_e7e9d5_idx"),
         ),
         migrations.AlterUniqueTogether(
             name="prediction",

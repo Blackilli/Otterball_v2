@@ -1,10 +1,10 @@
 from django.contrib import admin
 
 from discord_bot.models import (
-    DiscordProfile,
     ActiveMatchMessage,
-    DiscordGuild,
     DiscordChannel,
+    DiscordGuild,
+    DiscordProfile,
     DiscordTeamEmoji,
 )
 

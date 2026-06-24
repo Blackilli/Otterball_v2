@@ -4,8 +4,9 @@ from django.db import models
 
 if TYPE_CHECKING:
     from django.db.models.fields.related_descriptors import RelatedManager
-    from predictions.models import Prediction
+
     from discord_bot.models import ActiveMatchMessage
+    from predictions.models import Prediction
 
 
 # Create your models here.
@@ -193,9 +194,7 @@ class Team(models.Model):
 
 
 class TeamMapping(ExternalMappingBase):
-    team: Team = models.ForeignKey(
-        "Team", on_delete=models.CASCADE, related_name="mappings"
-    )
+    team: Team = models.ForeignKey("Team", on_delete=models.CASCADE, related_name="mappings")
 
     class Meta:
         unique_together = ("provider", "external_id")
@@ -244,11 +243,7 @@ class Match(models.Model):
 
     @property
     def outcome(self) -> MatchOutcome | None:
-        if (
-            not self.status == MatchStatus.FINISHED
-            or self.home_score is None
-            or self.away_score is None
-        ):
+        if not self.status == MatchStatus.FINISHED or self.home_score is None or self.away_score is None:
             return None
 
         if self.home_score > self.away_score:

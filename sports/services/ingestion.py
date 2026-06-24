@@ -3,13 +3,13 @@ import datetime
 import io
 import logging
 
-from PIL.ImageFile import ImageFile
 from django.core.files.base import ContentFile
 from django.db.models import Q
 from django.utils import timezone
 from django.utils.text import slugify
+from PIL.ImageFile import ImageFile
 
-from sports.constants import FIFA_STATUS_MAP, FIFA_GENDER_MAP
+from sports.constants import FIFA_GENDER_MAP, FIFA_STATUS_MAP
 from sports.integrations.fifa import (
     FifaClient,
     PictureFormat,
@@ -17,21 +17,14 @@ from sports.integrations.fifa import (
     TeamType,
 )
 from sports.models import (
+    Competition,
+    CompetitionMapping,
+    Gender,
     Match,
     MatchMapping,
-    TeamMapping,
-    MatchStatus as DjangoMatchStatus,
-    SportsProvider,
-    Competition,
-    Sport,
-    CompetitionMapping,
-    Team,
-    Gender,
-    SeasonMapping,
-    Season,
-    Stage,
-    StageMapping,
 )
+from sports.models import MatchStatus as DjangoMatchStatus
+from sports.models import Season, SeasonMapping, Sport, SportsProvider, Stage, StageMapping, Team, TeamMapping
 
 logger = logging.getLogger(__name__)
 
@@ -64,10 +57,7 @@ async def ingest_all_fifa_competitions(sport: Sport = Sport.SOCCER):
         }
 
         async for api_comp in client.get_competitions_all():
-            if (
-                not api_comp.id_competition
-                or api_comp.id_competition in existing_mappings
-            ):
+            if not api_comp.id_competition or api_comp.id_competition in existing_mappings:
                 continue
 
             comp_name = extract_name(api_comp.name)
@@ -92,14 +82,10 @@ async def ingest_fifa_national_teams(sport: Sport = Sport.SOCCER):
     async with FifaClient() as client:
         team_mapping_cache = {
             tm.external_id: tm
-            async for tm in TeamMapping.objects.filter(
-                provider=SportsProvider.FIFA
-            ).select_related("team")
+            async for tm in TeamMapping.objects.filter(provider=SportsProvider.FIFA).select_related("team")
         }
 
-        async for api_team in client.get_all_teams(
-            gender=None, team_type=TeamType.NATIONAL
-        ):
+        async for api_team in client.get_all_teams(gender=None, team_type=TeamType.NATIONAL):
             team_name = extract_name(api_team.name)
             if not api_team.id:
                 logger.warning(f"Team {team_name} has no ID, skipping.")
@@ -121,32 +107,24 @@ async def ingest_fifa_national_teams(sport: Sport = Sport.SOCCER):
 
                 db_team = team_mapping.team if team_mapping else Team(sport=sport)
 
-                metadata_chaned = (
-                    db_team.name != team_name or db_team.gender != target_gender
-                )
+                metadata_chaned = db_team.name != team_name or db_team.gender != target_gender
                 logo_changed = is_new or db_team.logo_url != logo_url
 
                 if not (is_new or metadata_chaned or logo_changed):
-                    logger.debug(
-                        f"Team {db_team.name} has no data modifications, skipping."
-                    )
+                    logger.debug(f"Team {db_team.name} has no data modifications, skipping.")
                     continue
 
                 if is_new:
                     logger.info(f"Seeding brand-new team entry: {team_name}")
                 else:
-                    logger.info(
-                        f"Data drift detected. Updating team metadata: {db_team.name} -> {team_name}"
-                    )
+                    logger.info(f"Data drift detected. Updating team metadata: {db_team.name} -> {team_name}")
 
                 db_team.name = team_name
                 db_team.logo_url = logo_url
                 db_team.gender = target_gender
 
                 if logo_url and logo_url:
-                    image_response: ImageFile | None = await client.get_picture_by_url(
-                        logo_url
-                    )
+                    image_response: ImageFile | None = await client.get_picture_by_url(logo_url)
                     if image_response:
                         try:
                             with image_response as pil_img:
@@ -187,15 +165,11 @@ async def ingest_fifa_seasons():
 
     async with FifaClient() as client:
         async for comp_mapping in (
-            CompetitionMapping.objects.filter(
-                competition__is_featured=True, provider=SportsProvider.FIFA
-            )
+            CompetitionMapping.objects.filter(competition__is_featured=True, provider=SportsProvider.FIFA)
             .select_related("competition")
             .aiterator()
         ):
-            async for api_season in client.get_competition_seasons(
-                competition_id=comp_mapping.external_id
-            ):
+            async for api_season in client.get_competition_seasons(competition_id=comp_mapping.external_id):
                 if not api_season or not api_season.id_season:
                     continue
                 season_name = extract_name(api_season.name)
@@ -206,9 +180,7 @@ async def ingest_fifa_seasons():
                     db_season.name = season_name
                     db_season.year = api_season.start_date.year
                     db_season.competition_id = comp_mapping.competition_id
-                    db_season.is_active = (
-                        api_season.start_date <= timezone.now() <= api_season.end_date
-                    )
+                    db_season.is_active = api_season.start_date <= timezone.now() <= api_season.end_date
 
                     await db_season.asave()
 
@@ -226,16 +198,9 @@ async def ingest_fifa_seasons():
 async def ingest_fifa_stages():
     async with FifaClient() as client:
         async for season_mapping in (
-            SeasonMapping.objects.select_related("season")
-            .filter(season__is_active=True)
-            .aiterator()
+            SeasonMapping.objects.select_related("season").filter(season__is_active=True).aiterator()
         ):
-            api_stages = [
-                stage
-                async for stage in client.get_stages(
-                    id_season=season_mapping.external_id
-                )
-            ]
+            api_stages = [stage async for stage in client.get_stages(id_season=season_mapping.external_id)]
             if not api_stages:
                 continue
 
@@ -311,23 +276,15 @@ async def ingest_upcoming_matches(
                 logger.error(f"No upcoming matches found for season {comp_id}")
                 continue
 
-            valid_matches = [
-                m
-                for m in api_matches
-                if m.id_match and m.home and m.away and m.id_stage
-            ]
+            valid_matches = [m for m in api_matches if m.id_match and m.home and m.away and m.id_stage]
 
-            ext_team_ids = {m.home.id_team for m in valid_matches} | {
-                m.away.id_team for m in valid_matches
-            }
+            ext_team_ids = {m.home.id_team for m in valid_matches} | {m.away.id_team for m in valid_matches}
             ext_stage_ids = {m.id_stage for m in valid_matches}
             ext_match_ids = {m.id_match for m in valid_matches}
 
             team_cache = {
                 tm.external_id: tm.team_id
-                async for tm in TeamMapping.objects.filter(
-                    external_id__in=ext_team_ids, provider=SportsProvider.FIFA
-                )
+                async for tm in TeamMapping.objects.filter(external_id__in=ext_team_ids, provider=SportsProvider.FIFA)
             }
 
             stage_cache = {
@@ -350,9 +307,7 @@ async def ingest_upcoming_matches(
                 away_id = team_cache.get(match.away.id_team)
 
                 if not (stage_id and home_id and away_id):
-                    logger.error(
-                        f"Incomplete infrastructure mappings for batch match {match.id_match}"
-                    )
+                    logger.error(f"Incomplete infrastructure mappings for batch match {match.id_match}")
                     continue
 
                 match_mapping = match_mapping_cache.get(match.id_match)
@@ -378,9 +333,7 @@ async def ingest_upcoming_matches(
                         provider=SportsProvider.FIFA,
                         match=db_match,
                     )
-                    logger.info(
-                        f"Successfully created new match mapping link for {db_match.id}"
-                    )
+                    logger.info(f"Successfully created new match mapping link for {db_match.id}")
 
 
 async def ingest_fifa_live_matches():
@@ -414,18 +367,14 @@ async def ingest_fifa_live_matches():
 
                 db_match_mapping = mapping_cache.get(api_match.id_match)
                 if not db_match_mapping:
-                    logger.error(
-                        f"Match mapping not found for match {api_match.id_match}"
-                    )
+                    logger.error(f"Match mapping not found for match {api_match.id_match}")
                     continue
 
                 db_match = db_match_mapping.match
 
                 old_home_score = db_match.home_score
                 old_away_score = db_match.away_score
-                new_status = FIFA_STATUS_MAP.get(
-                    api_match.match_status, DjangoMatchStatus.SCHEDULED
-                )
+                new_status = FIFA_STATUS_MAP.get(api_match.match_status, DjangoMatchStatus.SCHEDULED)
 
                 if (
                     old_home_score == api_match.home_team.score
@@ -435,23 +384,12 @@ async def ingest_fifa_live_matches():
                     logger.debug(f"No change detected for match {db_match.id}")
                     continue
 
-                db_match.home_score = (
-                    api_match.home_team.score
-                    if api_match.home_team.score is not None
-                    else 0
-                )
+                db_match.home_score = api_match.home_team.score if api_match.home_team.score is not None else 0
 
-                db_match.away_score = (
-                    api_match.away_team.score
-                    if api_match.away_team.score is not None
-                    else 0
-                )
+                db_match.away_score = api_match.away_team.score if api_match.away_team.score is not None else 0
                 db_match.status = new_status
                 await db_match.asave()
-                if (
-                    old_home_score != db_match.home_score
-                    or old_away_score != db_match.away_score
-                ):
+                if old_home_score != db_match.home_score or old_away_score != db_match.away_score:
                     logger.info(
                         f"Updated match {db_match.id} with live scores. From {old_home_score}:{old_away_score} to {db_match.home_score}:{db_match.away_score}"
                     )

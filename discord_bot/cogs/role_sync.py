@@ -37,9 +37,7 @@ class RoleSyncCog(commands.Cog):
             position=after.position,
             is_active=True,
         )
-        logger.info(
-            f"Role #{before.position} {before.name} updated to #{after.position} {after.name}"
-        )
+        logger.info(f"Role #{before.position} {before.name} updated to #{after.position} {after.name}")
 
     @commands.Cog.listener()
     async def on_guild_role_delete(self, role: discord.Role):

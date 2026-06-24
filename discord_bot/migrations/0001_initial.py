@@ -82,9 +82,7 @@ class Migration(migrations.Migration):
             fields=[
                 (
                     "id",
-                    models.BigIntegerField(
-                        primary_key=True, serialize=False, unique=True
-                    ),
+                    models.BigIntegerField(primary_key=True, serialize=False, unique=True),
                 ),
                 ("name", models.CharField(max_length=100)),
             ],

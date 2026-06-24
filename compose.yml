@@ -1,17 +1,20 @@
+---
 volumes:
   postgres_data:
   django_media:
   django_static:
+
 
 networks:
   otterball_network:
 
 x-logging: &default-logging
   logging:
-    driver: "json-file"
+    driver: json-file
     options:
-      max-size: "10m"
-      max-file: "3"
+      max-size: 10m
+      max-file: '3'
+
 
 x-shared-env: &shared-environment
   ENV: ${ENV:-production}
@@ -24,41 +27,39 @@ x-shared-env: &shared-environment
   ALLOWED_HOSTS: ${ALLOWED_HOSTS:-*}
   TZ: ${TZ:-Europe/Berlin}
 
+
 services:
   db:
     image: postgres:18-alpine
     restart: unless-stopped
     <<: *default-logging
-    volumes:
-      - postgres_data:/var/lib/postgresql
+    volumes: [postgres_data:/var/lib/postgresql]
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-secret_password}
       POSTGRES_DB: ${POSTGRES_DB:-otterball_db}
       TZ: ${TZ:-Europe/Berlin}
-    ports:
-      - "5432:5432"
-    networks:
-      - otterball_network
+    ports: [5432:5432]
+    networks: [otterball_network]
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "postgres"]
+      test: [CMD, pg_isready, -U, postgres]
       interval: 5s
       timeout: 5s
       retries: 5
+
 
   valkey:
     image: valkey/valkey:8-alpine
     restart: unless-stopped
     <<: *default-logging
-    environment:
-      - TZ=${TZ:-Europe/Berlin}
-    networks:
-      - otterball_network
+    environment: ['TZ=${TZ:-Europe/Berlin}']
+    networks: [otterball_network]
     healthcheck:
-      test: ["CMD", "valkey-cli", "ping"]
+      test: [CMD, valkey-cli, ping]
       interval: 5s
       timeout: 3s
       retries: 5
+
 
   web:
     build: .
@@ -66,25 +67,23 @@ services:
     <<: *default-logging
     environment:
       <<: *shared-environment
-    command: sh -c "uv run python manage.py migrate && uv run python manage.py collectstatic --noinput && uv run gunicorn otterball_v2.wsgi:application --bind 0.0.0.0:8000"
-    volumes:
-      - django_media:/app/media
-      - django_static:/app/static
-    ports:
-      - "8000:8000"
+    command: sh -c "uv run python manage.py migrate && uv run python manage.py collectstatic
+      --noinput && uv run gunicorn otterball_v2.wsgi:application --bind 0.0.0.0:8000"
+    volumes: [django_media:/app/media, django_static:/app/static]
+    ports: [8000:8000]
     depends_on:
       db:
         condition: service_healthy
       valkey:
         condition: service_healthy
-    networks:
-      - otterball_network
+    networks: [otterball_network]
     healthcheck:
-      test: [ "CMD", "curl", "-f", "http://localhost:8000/health/" ]
+      test: [CMD, curl, -f, http://localhost:8000/health/]
       interval: 10s
       timeout: 5s
       retries: 3
       start_period: 10s
+
 
   bot:
     build: .
@@ -98,14 +97,14 @@ services:
         condition: service_healthy
       valkey:
         condition: service_healthy
-    networks:
-      - otterball_network
+    networks: [otterball_network]
     healthcheck:
-      test: [ "CMD-SHELL", "test $$(find /tmp/bot_heartbeat -mmin -2)" ]
+      test: [CMD-SHELL, test $$(find /tmp/bot_heartbeat -mmin -2)]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 15s
+
 
   worker:
     build: .
@@ -114,21 +113,22 @@ services:
     environment:
       <<: *shared-environment
     command: uv run celery -A otterball_v2 worker --loglevel=info
-    volumes:
-      - django_media:/app/media
+    volumes: [django_media:/app/media]
     depends_on:
       db:
         condition: service_healthy
       valkey:
         condition: service_healthy
-    networks:
-      - otterball_network
+    networks: [otterball_network]
     healthcheck:
-      test: [ "CMD-SHELL", "uv run celery -A otterball_v2 inspect ping -d celery@$$HOSTNAME" ]
+      test:
+        - CMD-SHELL
+        - uv run celery -A otterball_v2 inspect ping -d celery@$$HOSTNAME
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 10s
+
 
   beat:
     build: .
@@ -142,10 +142,9 @@ services:
         condition: service_healthy
       valkey:
         condition: service_healthy
-    networks:
-      - otterball_network
+    networks: [otterball_network]
     healthcheck:
-      test: [ "CMD-SHELL", "ps aux | grep 'celery beat' | grep -v grep" ]
+      test: [CMD-SHELL, ps aux | grep 'celery beat' | grep -v grep]
       interval: 30s
       timeout: 5s
       retries: 3

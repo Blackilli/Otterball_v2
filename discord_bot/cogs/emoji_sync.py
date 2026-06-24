@@ -42,19 +42,13 @@ class EmojiSyncCog(commands.Cog):
 
             image_bytes = await asyncio.to_thread(read_image_bytes)
 
-            application_emoji = await self.bot.create_application_emoji(
-                name=emoji_name, image=image_bytes
-            )
+            application_emoji = await self.bot.create_application_emoji(name=emoji_name, image=image_bytes)
 
-            print(
-                f"✅ Application emoji created: {application_emoji} (ID: {application_emoji.id})"
-            )
+            print(f"✅ Application emoji created: {application_emoji} (ID: {application_emoji.id})")
             return application_emoji
 
         except discord.HTTPException as err:
-            print(
-                f"❌ Discord API registration failed for Team {team.id} with emoji_name {emoji_name}: {err}"
-            )
+            print(f"❌ Discord API registration failed for Team {team.id} with emoji_name {emoji_name}: {err}")
             return None
         except Exception as err:
             print(f"❌ Unexpected filesystem or context error: {err}")
@@ -66,9 +60,7 @@ class EmojiSyncCog(commands.Cog):
         async for team in Team.objects.filter(logo__isnull=False).aiterator():
             if await DiscordTeamEmoji.objects.filter(team=team).aexists():
                 continue
-            if _get_emoji_name(team) in [
-                emoji.name for emoji in await self.bot.fetch_application_emojis()
-            ]:
+            if _get_emoji_name(team) in [emoji.name for emoji in await self.bot.fetch_application_emojis()]:
                 continue
             emoji = await self.register_team_application_emoji(team)
             if emoji:

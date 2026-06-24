@@ -10,7 +10,7 @@ from django.conf import settings
 from django.utils import timezone
 
 from discord_bot.models import ActiveMatchMessage
-from sports.models import MatchStatus, Match
+from sports.models import Match, MatchStatus
 from sports.schemas import MatchUpdatePayload
 
 logger = logging.getLogger(__name__)
@@ -57,17 +57,13 @@ class MatchTickerCog(commands.Cog):
                     continue
 
         except asyncio.CancelledError:
-            logger.warning(
-                "Redis subscription loop requested shutdown. Cleaning connections..."
-            )
+            logger.warning("Redis subscription loop requested shutdown. Cleaning connections...")
             await pubsub.unsubscribe()
             await redis_connection.close()
             logger.info("Redis subscriber channel cleanly disconnected.")
 
     async def process_live_update(self, event: MatchUpdatePayload) -> None:
-        active_interfaces = ActiveMatchMessage.objects.filter(
-            match_id=event.match_id, is_ticker_finalized=False
-        )
+        active_interfaces = ActiveMatchMessage.objects.filter(match_id=event.match_id, is_ticker_finalized=False)
 
         async for active_msg in active_interfaces:
             thread = self.bot.get_channel(active_msg.thread_id)
@@ -106,9 +102,7 @@ class MatchTickerCog(commands.Cog):
                 match = active_msg.match
 
                 try:
-                    poll_message = await channel.fetch_message(
-                        active_msg.poll_message_id
-                    )
+                    poll_message = await channel.fetch_message(active_msg.poll_message_id)
                     if poll_message.poll and not poll_message.poll.is_finalised():
                         await poll_message.end_poll()
                 except discord.NotFound:
@@ -140,9 +134,7 @@ class MatchTickerCog(commands.Cog):
                             f"ℹ️ *Leaderboards are updating shortly.*"
                         )
 
-                        await self._update_or_send_final_message(
-                            channel, active_msg, final_text
-                        )
+                        await self._update_or_send_final_message(channel, active_msg, final_text)
                         active_msg.is_ticker_finalized = True
                         await active_msg.asave()
                     case MatchStatus.POSTPONED | MatchStatus.CANCELLED:
@@ -157,17 +149,13 @@ class MatchTickerCog(commands.Cog):
                             f"ℹ️ *All predictions for this specific fixture have been voided.*"
                         )
 
-                        await self._update_or_send_final_message(
-                            channel, active_msg, alert_text
-                        )
+                        await self._update_or_send_final_message(channel, active_msg, alert_text)
                         active_msg.is_ticker_finalized = True
                         await active_msg.asave()
             except discord.NotFound, discord.Forbidden:
                 continue
 
-    async def _send_new_ticker(
-        self, channel: discord.abc.Messageable, match: Match
-    ) -> discord.Message:
+    async def _send_new_ticker(self, channel: discord.abc.Messageable, match: Match) -> discord.Message:
         new_ticker = await channel.send("text")
         return new_ticker
 

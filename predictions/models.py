@@ -4,18 +4,18 @@ from typing import TYPE_CHECKING, Any, AsyncGenerator
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.db import models
-from django.db.models import Sum, Q
+from django.db.models import Q, Sum
 from django.utils import timezone
 
-from sports.models import Match, Season, Stage, MatchOutcome
+from sports.models import Match, MatchOutcome, Season, Stage
 
 logger = logging.getLogger(__name__)
 
 User = get_user_model()
 
 if TYPE_CHECKING:
-    from users.models import User
     from sports.models import Match
+    from users.models import User
 
 
 # Create your models here.
@@ -34,11 +34,7 @@ class PredictionPool(models.Model):
 
     async def aget_user_with_points(self) -> AsyncGenerator[tuple[User, int], Any]:
         async for user in (
-            User.objects.annotate(
-                total_points=Sum(
-                    "predictions__points_awarded", filter=Q(predictions__pool=self)
-                )
-            )
+            User.objects.annotate(total_points=Sum("predictions__points_awarded", filter=Q(predictions__pool=self)))
             .order_by("-total_points")
             .aiterator()
         ):
@@ -51,9 +47,7 @@ class PoolStageRule(models.Model):
         on_delete=models.CASCADE,
         related_name="stage_rules",
     )
-    stage = models.ForeignKey(
-        Stage, null=True, on_delete=models.CASCADE, related_name="stage_rules"
-    )
+    stage = models.ForeignKey(Stage, null=True, on_delete=models.CASCADE, related_name="stage_rules")
     level = models.IntegerField()
     points_per_correct = models.IntegerField(default=3)
 
@@ -103,9 +97,7 @@ class Prediction(models.Model):
             return
         logger.info(f"Updating points for prediction {self.id}")
         if self.is_correct:
-            self.points_awarded = (
-                await self.pool.stage_rules.aget(stage=self.match.stage)
-            ).points_per_correct
+            self.points_awarded = (await self.pool.stage_rules.aget(stage=self.match.stage)).points_per_correct
         self.is_processed = True
         await self.asave()
 
@@ -114,9 +106,7 @@ class Prediction(models.Model):
             return
         logger.info(f"Updating points for prediction {self.id}")
         if self.is_correct:
-            self.points_awarded = self.pool.stage_rules.get(
-                stage=self.match.stage
-            ).points_per_correct
+            self.points_awarded = self.pool.stage_rules.get(stage=self.match.stage).points_per_correct
         self.is_processed = True
         self.save()
 

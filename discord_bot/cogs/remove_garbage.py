@@ -22,22 +22,16 @@ class RemoveGarbageCog(commands.Cog):
 
         try:
             await message.delete()
-            logger.debug(
-                f"Intercepted and deleted live poll result in thread {message.channel.id}"
-            )
+            logger.debug(f"Intercepted and deleted live poll result in thread {message.channel.id}")
         except discord.Forbidden:
-            logger.warning(
-                f"Missing permissions to delete garbage message in channel {message.channel.id}"
-            )
+            logger.warning(f"Missing permissions to delete garbage message in channel {message.channel.id}")
         except discord.DiscordException as e:
             logger.error(f"Failed to delete live garbage message: {e}")
 
     @commands.Cog.listener()
     async def on_ready(self):
         if self.cleanup_running:
-            logger.info(
-                "Garbage cleanup already running or executed, skipping secondary trigger."
-            )
+            logger.info("Garbage cleanup already running or executed, skipping secondary trigger.")
             return
 
         self.cleanup_running = True
@@ -71,35 +65,23 @@ class RemoveGarbageCog(commands.Cog):
                     for i in range(0, len(messages_to_bulk_delete), 100):
                         chunk = messages_to_bulk_delete[i : i + 100]
                         try:
-                            await thread.delete_messages(
-                                chunk, reason="Garbage cleanup"
-                            )
-                            logger.info(
-                                f"Bulk-deleted {len(chunk)} poll results in thread {thread.id}"
-                            )
+                            await thread.delete_messages(chunk, reason="Garbage cleanup")
+                            logger.info(f"Bulk-deleted {len(chunk)} poll results in thread {thread.id}")
                         except discord.Forbidden:
-                            logger.warning(
-                                f"Missing Manage Messages permission in thread {thread.id}"
-                            )
+                            logger.warning(f"Missing Manage Messages permission in thread {thread.id}")
                             break
 
                 for old_message in single_delete_fallback:
                     try:
                         await old_message.delete()
-                        logger.info(
-                            f"Single-deleted ancient poll result {old_message.id}"
-                        )
+                        logger.info(f"Single-deleted ancient poll result {old_message.id}")
                     except discord.DiscordException:
                         pass
 
             except discord.Forbidden:
-                logger.warning(
-                    f"Bot lacks permissions to read history in thread {match_msg.thread_id}"
-                )
+                logger.warning(f"Bot lacks permissions to read history in thread {match_msg.thread_id}")
             except Exception as e:
-                logger.error(
-                    f"Error processing historical cleanup for thread {match_msg.thread_id}: {e}"
-                )
+                logger.error(f"Error processing historical cleanup for thread {match_msg.thread_id}: {e}")
 
         logger.info("Garbage removal historical sweep completed.")
         self.cleanup_running = False
