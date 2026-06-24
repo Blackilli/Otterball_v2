@@ -1,7 +1,7 @@
 # Otterball v2 🦦🏆
 Thank you clanker for the Readme <3
 
-Otterball v2 is a highly performant, dockerized sports prediction platform (e.g., for the FIFA World Cup) that seamlessly connects an interactive Django web dashboard with an advanced Discord bot. 
+Otterball v2 is a highly performant, dockerized sports prediction platform (e.g., for the FIFA World Cup) that seamlessly connects an interactive Django web dashboard with an advanced Discord bot.
 
 The system utilizes native Discord polls for prediction submissions, manages automated match day threads, calculates dynamic leaderboards using the official Standard Competition Ranking (1-2-2-4 ranking method), and processes data-intensive background tasks asynchronously within a cluster.
 
@@ -178,4 +178,3 @@ The project includes an optimized GitHub Actions pipeline (`.github/workflows/bu
 - **Caching:** Utilizes the native GitHub Actions cache backend (`type=gha`), ensuring that unchanged layers and the `uv` cache are reused. Subsequent builds typically complete in under 10 seconds.
 - **Tags:** Every image is tagged with the short Git commit SHA, and builds on the default branch automatically receive the `latest` tag.
 - **Manual Trigger:** Enabled via `workflow_dispatch`, allowing you to manually force a build via the GitHub Web UI or GitHub CLI (`gh workflow run`) at any time.
-

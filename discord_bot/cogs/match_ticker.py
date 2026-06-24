@@ -162,7 +162,7 @@ class MatchTickerCog(commands.Cog):
                         )
                         active_msg.is_ticker_finalized = True
                         await active_msg.asave()
-            except (discord.NotFound, discord.Forbidden):
+            except discord.NotFound, discord.Forbidden:
                 continue
 
     async def _send_new_ticker(
