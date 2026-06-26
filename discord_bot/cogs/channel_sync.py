@@ -14,14 +14,14 @@ class ChannelSyncCog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_guild_channel_create(self, channel: discord.abc.GuildChannel):
-        guild_row = await DiscordGuild.objects.filter(guild_id=channel.guild.id).afirst()
+        guild_row = await DiscordGuild.objects.filter(id=channel.guild.id).afirst()
         if not guild_row:
             return
 
         await DiscordChannel.objects.aupdate_or_create(
-            channel_id=channel.id,
+            id=channel.id,
             defaults={
-                "guild_id": guild_row.id,
+                "id": guild_row.id,
                 "name": channel.name,
                 "channel_type": str(channel.type),
                 "is_active": True,
@@ -33,7 +33,7 @@ class ChannelSyncCog(commands.Cog):
     async def on_guild_channel_update(self, before: discord.abc.GuildChannel, after: discord.abc.GuildChannel):
         if before.name == after.name and before.position == after.position:
             return
-        await DiscordChannel.objects.filter(channel_id=after.id).aupdate(
+        await DiscordChannel.objects.filter(id=after.id).aupdate(
             name=after.name,
             position=after.position,
         )
@@ -41,5 +41,5 @@ class ChannelSyncCog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_guild_channel_delete(self, channel: discord.abc.GuildChannel):
-        await DiscordChannel.objects.filter(channel_id=channel.id).aupdate(is_active=False)
+        await DiscordChannel.objects.filter(id=channel.id).aupdate(is_active=False)
         logger.info(f"Channel #{channel.position} {channel.name} deleted")
