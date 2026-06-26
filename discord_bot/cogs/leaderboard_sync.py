@@ -116,18 +116,22 @@ class LeaderboardSyncCog(commands.Cog):
 
             field_value = f"**{profile.global_name}** ({points})"
 
+            rank_header = "———`{rank}`———"
+
             if last_displayed_rank < 10 and rank > last_displayed_rank + 1:
                 for r in range(last_displayed_rank + 1, min(rank, 11)):
-                    leaderboard_embed.add_field(name=f"{r}.", value=" ----- ", inline=True)
+                    field_name = rank_header.format(rank=r)
+                    leaderboard_embed.add_field(name=field_name, value="  ", inline=True)
                 last_displayed_rank = rank
 
             if rank <= 10:
-                if len(leaderboard_embed.fields) > 0 and leaderboard_embed.fields[-1].name == f"{rank}.":
+                field_name = rank_header.format(rank=rank)
+                if len(leaderboard_embed.fields) > 0 and leaderboard_embed.fields[-1].name == field_name:
                     current_val = leaderboard_embed.fields[-1].value
                     if len(current_val) + len(field_value) < 1000:
                         leaderboard_embed.set_field_at(
                             len(leaderboard_embed.fields) - 1,
-                            name=f"{rank}.",
+                            name=field_name,
                             value=f"{current_val}\n{field_value}",
                             inline=True,
                         )
@@ -135,26 +139,27 @@ class LeaderboardSyncCog(commands.Cog):
                         continue
 
                 leaderboard_embed.add_field(
-                    name=f"{rank}.",
+                    name=field_name,
                     inline=True,
                     value=field_value,
                 )
                 last_displayed_rank = rank
             else:
                 field_value = f"`#{rank}` {field_value}"
-                if len(leaderboard_embed.fields) > 0 and leaderboard_embed.fields[-1].name == "Plebs":
+                field_name = rank_header.format(rank="Plebs")
+                if len(leaderboard_embed.fields) > 0 and leaderboard_embed.fields[-1].name == field_name:
                     current_val = leaderboard_embed.fields[-1].value
 
                     if len(current_val) + len(field_value) < 1000:
                         leaderboard_embed.set_field_at(
                             len(leaderboard_embed.fields) - 1,
-                            name="Plebs",
+                            name=field_name,
                             value=f"{current_val}\n{field_value}",
                             inline=False,
                         )
                         continue
                 leaderboard_embed.add_field(
-                    name="Plebs",
+                    name=field_name,
                     inline=False,
                     value=field_value,
                 )
