@@ -188,14 +188,14 @@ class Prediction(models.Model):
 
         logger.info(f"Updating points for prediction {self.id}")
 
-        match_obj = await Match.objects.select_related("stage").aget(id=self.match_id)
+        match_obj = await Match.objects.aget(id=self.match_id)
 
         if self.predicted_outcome == match_obj.outcome:
             if cached_points is not None:
                 self.points_awarded = cached_points
             else:
                 try:
-                    stage_rule = await self.pool.stage_rules.aget(stage=match_obj.stage)
+                    stage_rule = await self.pool.stage_rules.aget(stage_id=match_obj.stage_id)
                     self.points_awarded = stage_rule.points_per_correct
                 except PoolStageRule.DoesNotExist:
                     try:
