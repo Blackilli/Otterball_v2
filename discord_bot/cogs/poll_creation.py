@@ -9,6 +9,7 @@ from discord.utils import format_dt
 from django.utils import timezone
 
 from discord_bot.models import ActiveMatchMessage, DiscordGuildPool, DiscordTeamEmoji
+from predictions.models import PoolConfiguration
 from sports.models import Match
 
 logger = logging.getLogger(__name__)
@@ -25,64 +26,99 @@ class DayOfWeek(IntEnum):
 
 
 class PollCreationCog(commands.Cog):
-    utc = datetime.timezone.utc
-
-    time = datetime.time(hour=0, minute=30, tzinfo=utc)
 
     def __init__(self, bot: commands.Bot):
-        logger.info("Poll creation loop started.")
         self.bot = bot
+
+    async def cog_load(self) -> None:
+        logger.info("Initializing dynamic poll intervals from database...")
+        try:
+            distinct_times = set()
+            async for config in (
+                PoolConfiguration.objects.filter(pool__is_active=True).select_related("pool").aiterator()
+            ):
+                t = config.poll_creation_time
+                distinct_times.add(datetime.time(hour=t.hour, minute=t.minute))
+
+            if distinct_times:
+                times_list = list(distinct_times)
+                self.poll_creation_loop.change_interval(time=times_list)
+                logger.info(f"Poll creation times: {times_list}")
+            else:
+                self.poll_creation_loop.change_interval(time=datetime.time(hour=0, minute=0))
+                logger.info("No poll creation times found, setting to midnight.")
+
+        except Exception as e:
+            logger.error(f"Error loading poll creation times: {e}")
         self.poll_creation_loop.start()
 
     def cog_unload(self) -> None:
         self.poll_creation_loop.cancel()
 
-    @tasks.loop(time=time)
+    @tasks.loop()
     async def poll_creation_loop(self):
-        # if timezone.now().weekday() != DayOfWeek.SUNDAY:
-        #     logger.info("Poll creation loop skipped, not a Sunday.")
-        #     return
+        local_now = timezone.localtime(timezone.now())
+        current_weekday = local_now.weekday()
+        current_time = datetime.time(hour=local_now.hour, minute=local_now.minute)
+
+        logger.info(f"Poll creation loop triggered at {local_now.strftime('%H:%M')} (Weekday: {current_weekday})")
+
         emojis = {emoji.id: emoji for emoji in await self.bot.fetch_application_emojis()}
 
-        async for guild_pool in (
-            DiscordGuildPool.objects.select_related("pool")
-            .select_related("pool__season")
-            .filter(pool__is_active=True)
-            .filter(is_active=True)
+        guild_pools_iterator = (
+            DiscordGuildPool.objects.select_related("pool", "pool__season", "pool__configuration")
+            .filter(
+                is_active=True,
+                pool__is_active=True,
+                pool__configuration__poll_creation_time=current_time,
+            )
             .aiterator()
-        ):
+        )
+
+        async for guild_pool in guild_pools_iterator:
             if not guild_pool.pool:
                 logger.warning(f"Guild pool {guild_pool.id} has no pool, skipping.")
                 continue
 
-            guild = self.bot.get_guild(guild_pool.guild_id)
-            if not guild:
-                guild = await self.bot.fetch_guild(guild_pool.guild_id)
+            pool_config = guild_pool.pool.configuration
 
-            channel = self.bot.get_channel(guild_pool.channel_id)
-            if not channel:
-                channel = await self.bot.fetch_channel(guild_pool.channel_id)
+            if current_weekday not in pool_config.poll_creation_weekdays:
+                continue
+
+            try:
+                guild = self.bot.get_guild(guild_pool.guild_id) or await self.bot.fetch_guild(guild_pool.guild_id)
+                channel = self.bot.get_channel(guild_pool.channel_id) or await self.bot.fetch_channel(
+                    guild_pool.channel_id
+                )
+            except discord.NotFound:
+                logger.warning(f"Guild {guild_pool.guild_id} or Channel {guild_pool.channel_id} not found, skipping.")
+                continue
 
             if not isinstance(channel, discord.abc.Messageable):
-                logger.warning(f"Channel {channel.id} is not a messageable, skipping.")
                 continue
+
+            effective_lookahead_days = min(pool_config.poll_creation_lookahead_days, 7)
+            lookahead_limit = local_now + datetime.timedelta(days=effective_lookahead_days)
 
             notification_role_id = guild_pool.notification_role_id
             notification_role = None
             if notification_role_id:
-                notification_role = guild.get_role(notification_role_id)
-                if not notification_role:
-                    notification_role = await guild.fetch_role(notification_role_id)
+                try:
+                    notification_role = guild.get_role(notification_role_id) or await guild.fetch_role(
+                        notification_role_id
+                    )
+                except discord.NotFound:
+                    logger.warning(f"Notification role {notification_role_id} missing from server.")
 
             upcoming_matches = [
                 match
                 async for match in Match.objects.filter(
-                    kickoff__gte=datetime.datetime.now(self.utc),
-                    kickoff__lte=datetime.datetime.now(self.utc) + datetime.timedelta(days=7),
+                    kickoff__gte=local_now,
+                    kickoff__lte=lookahead_limit,
                     stage__season_id=guild_pool.pool.season_id,
                 )
                 .select_related("home_team", "away_team")
-                .exclude(predictions__pool_id=guild_pool.pool_id)
+                .exclude(predictions__pool_id=guild_pool.pool_id, active_messages__pool_id=guild_pool.pool_id)
                 .order_by("kickoff")
                 .aiterator()
             ]
@@ -90,11 +126,18 @@ class PollCreationCog(commands.Cog):
             if not upcoming_matches:
                 continue
 
+            team_ids = {m.home_team_id for m in upcoming_matches} | {m.away_team_id for m in upcoming_matches}
+            emoji_mapping = {
+                e.team_id: e async for e in DiscordTeamEmoji.objects.filter(team_id__in=team_ids).aiterator()
+            }
+
             logger.info(f"Found {len(upcoming_matches)} upcoming matches @{notification_role.mention}.")
             thread_start_message = (
                 f"The new polls are ready! {notification_role.mention if notification_role else ''}"
             )
             logger.info(f"Sending thread start message: {thread_start_message}")
+            logger.info(f"first match: {upcoming_matches[0].home_team} vs. {upcoming_matches[0].away_team}")
+            # return
             try:
                 thread_start_msg = await channel.send(thread_start_message)
                 thread_name = f"Polls {upcoming_matches[0].kickoff.strftime('%Y-%m-%d')} - {upcoming_matches[-1].kickoff.strftime('%Y-%m-%d')}"
@@ -109,20 +152,25 @@ class PollCreationCog(commands.Cog):
 
             try:
                 for match in upcoming_matches:
-                    db_home_emoji = await DiscordTeamEmoji.objects.filter(team_id=match.home_team_id).afirst()
-                    db_away_emoji = await DiscordTeamEmoji.objects.filter(team_id=match.away_team_id).afirst()
-                    home_emoji = emojis.get(db_home_emoji.id if db_home_emoji else 0, ":flag_white:")
-                    away_emoji = emojis.get(db_away_emoji.id if db_away_emoji else 0, ":flag_black:")
+                    db_home_emoji = emoji_mapping.get(match.home_team_id)
+                    db_away_emoji = emoji_mapping.get(match.away_team_id)
+
+                    home_emoji = emojis.get(db_home_emoji.id if db_home_emoji else 0, "⚪")
+                    away_emoji = emojis.get(db_away_emoji.id if db_away_emoji else 0, "⚫")
 
                     content = f"# **{home_emoji} {match.home_team}** vs. **{match.away_team} {away_emoji}**"
                     content += f"\n### 📅   {format_dt(match.kickoff, style='F')} "
                     content += f"\n### ⏳   {format_dt(match.kickoff, style='R')}"
                     content += f"\n-# Polls may close early, so don't vote on the last second"
+
                     duration = match.kickoff - timezone.now()
+                    if duration.total_seconds() < 0:
+                        continue
+
                     logger.info(f"Creating poll for {match.id} for {floor(duration.total_seconds()/60/60)} hours.")
                     poll = (
                         discord.Poll(
-                            question=f"**{match.home_team}** vs. **{match.away_team}**",
+                            question=f"{match.home_team} vs. {match.away_team}",
                             duration=duration,
                         )
                         .add_answer(text=match.home_team.name, emoji=home_emoji)
@@ -142,5 +190,8 @@ class PollCreationCog(commands.Cog):
                         poll_message_id=poll_msg.id,
                     )
             except Exception as e:
-                logger.error(f"Error creating polls: {e}")
-                await thread.delete()
+                logger.error(f"Error executing poll generation context: {e}")
+                try:
+                    await thread.delete()
+                except Exception:
+                    pass
