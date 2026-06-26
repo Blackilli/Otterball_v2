@@ -28,6 +28,7 @@ def _get_emoji_name(team: Team) -> str:
 class EmojiSyncCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        self._sync_in_progress = False
 
     async def register_team_application_emoji(self, team: Team) -> discord.Emoji | None:
         if not team.logo:
@@ -44,34 +45,56 @@ class EmojiSyncCog(commands.Cog):
 
             application_emoji = await self.bot.create_application_emoji(name=emoji_name, image=image_bytes)
 
-            print(f"✅ Application emoji created: {application_emoji} (ID: {application_emoji.id})")
+            logger.info(f"✅ Application emoji created: {application_emoji} (ID: {application_emoji.id})")
             return application_emoji
 
         except discord.HTTPException as err:
-            print(f"❌ Discord API registration failed for Team {team.id} with emoji_name {emoji_name}: {err}")
+            logger.error(f"❌ Discord API registration failed for Team {team.id} with emoji_name {emoji_name}: {err}")
             return None
         except Exception as err:
-            print(f"❌ Unexpected filesystem or context error: {err}")
+            logger.error(f"❌ Unexpected filesystem or context error: {err}")
             return None
 
     @commands.Cog.listener()
     async def on_ready(self):
+        if self._sync_in_progress:
+            logger.info("Emoji sync already in progress, skipping.")
+            return
         logger.info("Emoji sync started.")
-        async for team in Team.objects.filter(logo__isnull=False).aiterator():
-            if await DiscordTeamEmoji.objects.filter(team=team).aexists():
-                continue
-            if _get_emoji_name(team) in [emoji.name for emoji in await self.bot.fetch_application_emojis()]:
-                continue
-            emoji = await self.register_team_application_emoji(team)
-            if emoji:
-                try:
-                    await DiscordTeamEmoji.objects.acreate(
-                        team=team,
-                        id=emoji.id,
-                        name=emoji.name,
-                    )
-                except Exception as e:
-                    logger.error(f"Error saving emoji for team {team.id}: {e}")
-                    await emoji.delete()
+
+        try:
+            discord_emojis = await self.bot.fetch_application_emojis()
+            existing_emoji_names = {emoji.name for emoji in discord_emojis}
+
+            synced_team_ids = {
+                entry["team_id"] async for entry in DiscordTeamEmoji.objects.values("team_id").aiterator()
+            }
+
+            async for team in Team.objects.filter(logo__isnull=False).aiterator():
+                if team.id in synced_team_ids:
                     continue
-        logger.info("Emoji sync completed.")
+
+                emoji_name = _get_emoji_name(team)
+                if emoji_name in existing_emoji_names:
+                    logger.debug(f"Emoji {emoji_name} already exists, skipping.")
+                    continue
+
+                emoji = await self.register_team_application_emoji(team)
+                if emoji:
+                    try:
+                        await DiscordTeamEmoji.objects.acreate(
+                            team=team,
+                            id=emoji.id,
+                            name=emoji.name,
+                        )
+                        synced_team_ids.add(team.id)
+                        existing_emoji_names.add(emoji.name)
+                    except Exception as e:
+                        logger.error(f"Error saving emoji for team {team.id}: {e}")
+                        await emoji.delete()
+                        continue
+            logger.info("Emoji sync completed.")
+        except Exception as e:
+            logger.error(f"Emoji sync failed: {e}")
+        finally:
+            self._sync_in_progress = False
