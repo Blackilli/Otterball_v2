@@ -1,4 +1,5 @@
 import logging
+from typing import Any
 
 import discord
 from discord.ext import commands, tasks
@@ -14,7 +15,12 @@ logger = logging.getLogger(__name__)
 class LeaderboardSyncCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.leaderboards: dict[int, list[tuple[User, int]]] = {}
+        self.leaderboards: dict[int, tuple[[tuple[Any, ...], tuple[Any, ...]]]] = {}
+        self.leaderboard_sync_loop.start()
+        self.counter = 0
+
+    def cog_unload(self) -> None:
+        self.leaderboard_sync_loop.cancel()
 
     @commands.Cog.listener()
     async def on_ready(self):
@@ -24,18 +30,21 @@ class LeaderboardSyncCog(commands.Cog):
             if db_guild_pool.leaderboard_msg:
                 await self.update_leaderboard_msg(db_guild_pool)
                 continue
-            guild = self.bot.get_guild(db_guild_pool.guild_id)
-            if not guild:
-                guild = await self.bot.fetch_guild(db_guild_pool.guild_id)
-                if not guild:
-                    logger.warning(f"Guild {db_guild_pool.guild_id} not found, skipping.")
-                    continue
-            channel = guild.get_channel(db_guild_pool.channel_id)
-            if not channel:
-                channel = await guild.fetch_channel(db_guild_pool.channel_id)
-                if not isinstance(channel, discord.abc.Messageable):
-                    logger.warning(f"Channel {db_guild_pool.channel_id} not found, skipping.")
-                    continue
+            try:
+                guild = self.bot.get_guild(db_guild_pool.guild_id) or await self.bot.fetch_guild(
+                    db_guild_pool.guild_id
+                )
+                channel = self.bot.get_channel(db_guild_pool.channel_id) or await guild.fetch_channel(
+                    db_guild_pool.channel_id
+                )
+            except discord.NotFound:
+                logger.warning(
+                    f"Guild {db_guild_pool.guild_id} or Channel {db_guild_pool.channel_id} not found during initialization."
+                )
+                continue
+
+            if not isinstance(channel, discord.abc.Messageable):
+                continue
 
             msg = await channel.send("Leaderboard\n-# soon™")
             if msg:
@@ -44,52 +53,67 @@ class LeaderboardSyncCog(commands.Cog):
                 await db_guild_pool.asave()
                 await msg.pin()
 
-    async def update_leaderboard_msg(self, guild_pool: DiscordGuildPool):
-        user_cache = {
-            profile.user_id: profile async for profile in DiscordProfile.objects.filter(user__is_active=True)
-        }
+    async def update_leaderboard_msg(self, guild_pool: DiscordGuildPool, force: bool = False):
         if not guild_pool.leaderboard_msg:
             return
-        guild = self.bot.get_guild(guild_pool.guild_id)
-        if not guild:
-            guild = await self.bot.fetch_guild(guild_pool.guild_id)
-            if not guild:
-                logger.warning(f"Guild {guild_pool.guild_id} not found, skipping.")
-        channel = guild.get_channel(guild_pool.channel_id)
-        if not channel:
-            channel = await guild.fetch_channel(guild_pool.channel_id)
-            if not isinstance(channel, discord.abc.Messageable):
-                logger.warning(f"Channel {guild_pool.channel_id} not found, skipping.")
-        msg = await channel.fetch_message(guild_pool.leaderboard_msg)
 
-        if not msg:
-            logger.warning(f"Leaderboard message {guild_pool.leaderboard_msg} not found, skipping.")
+        user_cache = {
+            profile.user_id: profile
+            async for profile in DiscordProfile.objects.filter(
+                user__is_active=True,
+                user__predictions__pool_id=guild_pool.pool_id,
+            ).distinct()
+        }
+
+        raw_leaderboard_data = []
+        async for rank, user, points in guild_pool.pool.aget_leaderboard():
+            profile = user_cache.get(user.id)
+            if profile:
+                raw_leaderboard_data.append((rank, profile.global_name, points))
+
+        raw_rules_data = []
+        async for stage_rule in (
+            PoolStageRule.objects.filter(pool_id=guild_pool.pool_id)
+            .select_related("stage")
+            .order_by("level")
+            .aiterator()
+        ):
+            stage_name = stage_rule.stage.name if stage_rule.stage else "Global Fallback / Baseline"
+            raw_rules_data.append((stage_name, stage_rule.points_per_correct))
+
+        current_fingerprint = (tuple(raw_leaderboard_data), tuple(raw_rules_data))
+
+        if self.leaderboards.get(guild_pool.id) == current_fingerprint and not force:
+            logger.info(f"Leaderboard for Pool {guild_pool.id} unchanged, skipping update.")
+            return
+
+        try:
+            guild = self.bot.get_guild(guild_pool.guild_id) or await self.bot.fetch_guild(guild_pool.guild_id)
+            channel = self.bot.get_channel(guild_pool.channel_id) or await guild.fetch_channel(guild_pool.channel_id)
+            msg = await channel.fetch_message(guild_pool.leaderboard_msg)
+        except discord.NotFound:
+            logger.warning(f"Leaderboard infrastructure component missing for Pool {guild_pool.id}, skipping update.")
+            return
+
         if not msg.pinned:
-            await msg.pin()
+            try:
+                await msg.pin()
+            except discord.HTTPException:
+                logger.warning(f"Failed to pin leaderboard message {msg.id}")
 
         leaderboard_embed = discord.Embed(
             title="**Leaderboard**",
             color=discord.Color.blurple(),
             timestamp=timezone.now(),
         )
-
-        last_points = None
-        rank = 1
-        counter = 0
         last_displayed_rank = 0
 
-        async for user, points in guild_pool.pool.aget_user_with_points():
+        async for rank, user, points in guild_pool.pool.aget_leaderboard():
             profile = user_cache.get(user.id)
             if not profile:
                 logger.warning(f"User {user.id} not found in cache, skipping.")
                 continue
 
-            counter += 1
-
-            if last_points is None or last_points != points:
-                rank = counter
-
-            last_points = points
             field_value = f"**{profile.global_name}** ({points})"
 
             if last_displayed_rank < 10 and rank > last_displayed_rank + 1:
@@ -109,6 +133,7 @@ class LeaderboardSyncCog(commands.Cog):
                         )
                         last_displayed_rank = rank
                         continue
+
                 leaderboard_embed.add_field(
                     name=f"{rank}.",
                     inline=True,
@@ -116,7 +141,7 @@ class LeaderboardSyncCog(commands.Cog):
                 )
                 last_displayed_rank = rank
             else:
-                field_value = f"{rank}.: {field_value}"
+                field_value = f"`#{rank}` {field_value}"
                 if len(leaderboard_embed.fields) > 0 and leaderboard_embed.fields[-1].name == "Plebs":
                     current_val = leaderboard_embed.fields[-1].value
 
@@ -137,24 +162,35 @@ class LeaderboardSyncCog(commands.Cog):
         leaderboard_embed.set_footer(text=f"Last updated")
 
         point_distribution_embed = discord.Embed(title="Point Distribution")
+
         async for stage_rule in (
             PoolStageRule.objects.filter(pool_id=guild_pool.pool_id)
             .select_related("stage")
             .order_by("level")
             .aiterator()
         ):
+            stage_name = stage_rule.stage.name if stage_rule.stage else "Global Fallback / Baseline"
             point_distribution_embed.add_field(
-                name=f"{stage_rule.stage.name}",
+                name=stage_name,
                 value=f"**{stage_rule.points_per_correct}** points per correct answer",
             )
         logger.info(f"leaderboard: {leaderboard_embed.to_dict()}")
         logger.info(f"point distribution: {point_distribution_embed.to_dict()}")
         await msg.edit(content="", embeds=[leaderboard_embed, point_distribution_embed])
 
-        # await msg.edit(content=content)
+        self.leaderboards[guild_pool.id] = current_fingerprint
+        logger.info(f"Leaderboard for Pool {guild_pool.id} updated.")
 
     @tasks.loop(seconds=30)
     async def leaderboard_sync_loop(self):
-        prediction_cache = Prediction.objects.filter()
-        async for db_guild_pool in DiscordGuildPool.objects.filter(is_active=True):
-            leaderboard: list[tuple[User, int]] = []
+        async for db_guild_pool in (
+            DiscordGuildPool.objects.filter(is_active=True).select_related("pool", "pool__configuration").aiterator()
+        ):
+            try:
+                await self.update_leaderboard_msg(db_guild_pool, force=self.counter == 0)
+                self.counter = (self.counter + 1) % 10
+                logger.info(
+                    f"Background database sync loop for GuildPool {db_guild_pool.id} completed. Counter: {self.counter}"
+                )
+            except Exception as e:
+                logger.error(f"Failed background database sync loop for GuildPool {db_guild_pool.id}: {e}")
