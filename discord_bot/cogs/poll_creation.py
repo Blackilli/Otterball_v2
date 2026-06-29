@@ -8,9 +8,10 @@ from discord.ext import commands, tasks
 from discord.utils import format_dt
 from django.utils import timezone
 
+from discord_bot.constants import DISCORD_POLL_ANSWER_ORDER_MAP
 from discord_bot.models import ActiveMatchMessage, DiscordGuildPool, DiscordTeamEmoji
 from predictions.models import PoolConfiguration
-from sports.models import Match
+from sports.models import Match, MatchOutcome
 
 logger = logging.getLogger(__name__)
 
@@ -122,7 +123,7 @@ class PollCreationCog(commands.Cog):
                     kickoff__lte=lookahead_limit,
                     stage__season_id=guild_pool.pool.season_id,
                 )
-                .select_related("home_team", "away_team")
+                .select_related("home_team", "away_team", "stage")
                 .exclude(predictions__pool_id=guild_pool.pool_id, active_messages__pool_id=guild_pool.pool_id)
                 .order_by("kickoff")
                 .aiterator()
@@ -173,15 +174,27 @@ class PollCreationCog(commands.Cog):
                         continue
 
                     logger.info(f"Creating poll for {match.id} for {floor(duration.total_seconds()/60/60)} hours.")
-                    poll = (
-                        discord.Poll(
-                            question=f"{match.home_team} vs. {match.away_team}",
-                            duration=duration,
-                        )
-                        .add_answer(text=match.home_team.name, emoji=home_emoji)
-                        .add_answer(text="Draw")
-                        .add_answer(text=match.away_team.name, emoji=away_emoji)
+                    poll = discord.Poll(
+                        question=f"{match.home_team} vs. {match.away_team}",
+                        duration=duration,
                     )
+                    answer_order = DISCORD_POLL_ANSWER_ORDER_MAP.get(match.stage.stage_type)
+                    if answer_order is None:
+                        logger.error(f"No answers found for match {match.id} in stage {match.stage.id}")
+                        continue
+                    for outcome in answer_order:
+                        match outcome:
+                            case None:
+                                continue
+                            case MatchOutcome.HOME_WIN:
+                                poll.add_answer(text=match.home_team.name, emoji=home_emoji)
+                                continue
+                            case MatchOutcome.DRAW:
+                                poll.add_answer(text="Draw")
+                                continue
+                            case MatchOutcome.AWAY_WIN:
+                                poll.add_answer(text=match.away_team.name, emoji=away_emoji)
+                                continue
                     logger.info(f"Poll created: {poll}")
                     logger.info(content)
                     poll_msg = await thread.send(content=content, poll=poll)

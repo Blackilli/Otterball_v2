@@ -1,9 +1,13 @@
+import logging
+
 import discord
 from discord.ext import commands
 
-from discord_bot.constants import DISCORD_POLL_MAP
+from discord_bot.constants import DISCORD_POLL_ANSWER_ORDER_MAP
 from discord_bot.models import ActiveMatchMessage, DiscordProfile
 from predictions.models import Prediction
+
+logger = logging.getLogger(__name__)
 
 
 class PollPredictionCog(commands.Cog):
@@ -12,14 +16,23 @@ class PollPredictionCog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_raw_poll_vote_add(self, payload: discord.RawPollVoteActionEvent):
-        prediction_outcome = DISCORD_POLL_MAP.get(payload.answer_id)
-        if not prediction_outcome:
+        match_msg = (
+            await ActiveMatchMessage.objects.filter(
+                poll_message_id=payload.message_id,
+            )
+            .select_related("match", "match__stage")
+            .afirst()
+        )
+        if match_msg is None or match_msg.match is None or match_msg.match.stage is None:
             return
 
-        match_msg = await ActiveMatchMessage.objects.filter(
-            poll_message_id=payload.message_id,
-        ).afirst()
-        if not match_msg:
+        answer_order = DISCORD_POLL_ANSWER_ORDER_MAP.get(match_msg.match.stage.stage_type)
+        if answer_order is None or len(answer_order) <= payload.answer_id:
+            logger.error(f"Invalid poll answer: {payload.answer_id}")
+            return
+
+        prediction_outcome = answer_order[payload.answer_id]
+        if not prediction_outcome:
             return
 
         profile = await DiscordProfile.objects.filter(id=payload.user_id).afirst()

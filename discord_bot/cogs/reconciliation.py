@@ -3,7 +3,7 @@ import logging
 import discord
 from discord.ext import commands
 
-from discord_bot.constants import DISCORD_POLL_MAP
+from discord_bot.constants import DISCORD_POLL_ANSWER_ORDER_MAP
 from discord_bot.models import (
     ActiveMatchMessage,
     DiscordChannel,
@@ -23,7 +23,6 @@ class ReconciliationCog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_ready(self):
-        logger = logging.getLogger(__name__)
         logger.info("Reconciliation check started.")
         await self.reconcile_roles()
         await self.reconcile_channels()
@@ -98,7 +97,11 @@ class ReconciliationCog(commands.Cog):
 
         predictions_to_sync = []
 
-        async for match_msg in ActiveMatchMessage.objects.filter(is_poll_finalized=False).aiterator():
+        async for match_msg in (
+            ActiveMatchMessage.objects.filter(is_poll_finalized=False)
+            .select_related("match", "match__stage")
+            .aiterator()
+        ):
             try:
                 channel = self.bot.get_channel(match_msg.channel_id)
                 if not channel:
@@ -113,9 +116,15 @@ class ReconciliationCog(commands.Cog):
                 if not message.poll:
                     logger.warning(f"Poll not found for match {match_msg.match_id}")
                     continue
+                answer_order = DISCORD_POLL_ANSWER_ORDER_MAP.get(match_msg.match.stage.stage_type)
 
                 for answer in message.poll.answers:
-                    predicted_outcome = DISCORD_POLL_MAP.get(answer.id)
+                    if answer_order is None or len(answer_order) <= answer.id:
+                        logger.error(
+                            f"Invalid poll map for match {match_msg.match_id} in stage {match_msg.match.stage.id}"
+                        )
+                        continue
+                    predicted_outcome = answer_order[answer.id]
                     if not predicted_outcome:
                         logger.error(f"Invalid poll answer: {answer.id}")
                         continue
