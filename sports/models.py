@@ -17,12 +17,9 @@ class Sport(models.TextChoices):
 
 class StageType(models.TextChoices):
     GROUP = "GROUP", "Group Stage"
-    ROUND_OF_32 = "R32", "Round of 32"
-    ROUND_OF_16 = "R16", "Round of 16"
-    QUARTER_FINALS = "QF", "Quarter-Finals"
-    SEMI_FINALS = "SF", "Semi-Finals"
-    THIRD_PLACE_PLAYOFF = "TPP", "Third Place Playoff"
-    FINAL = "FINAL", "Final"
+    KNOCK_OUT = "KNOCK_OUT", "Knockout Stage"
+    LEAGUE = "LEAGUE", "League"
+    OTHER = "OTHER", "Other"
 
 
 class SportsProvider(models.TextChoices):

@@ -9,7 +9,7 @@ from django.utils import timezone
 from django.utils.text import slugify
 from PIL.ImageFile import ImageFile
 
-from sports.constants import FIFA_GENDER_MAP, FIFA_STATUS_MAP
+from sports.constants import FIFA_GENDER_MAP, FIFA_STAGE_TYPE_MAP, FIFA_STATUS_MAP
 from sports.integrations.fifa import (
     FifaClient,
     PictureFormat,
@@ -24,7 +24,17 @@ from sports.models import (
     MatchMapping,
 )
 from sports.models import MatchStatus as DjangoMatchStatus
-from sports.models import Season, SeasonMapping, Sport, SportsProvider, Stage, StageMapping, Team, TeamMapping
+from sports.models import (
+    Season,
+    SeasonMapping,
+    Sport,
+    SportsProvider,
+    Stage,
+    StageMapping,
+    StageType,
+    Team,
+    TeamMapping,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -203,7 +213,7 @@ async def ingest_fifa_stages():
             api_stages = [stage async for stage in client.get_stages(id_season=season_mapping.external_id)]
             if not api_stages:
                 continue
-
+            logger.info(f"Ingesting {len(api_stages)} stages for season {season_mapping.season.name}")
             ext_stage_ids = {s.id_stage for s in api_stages if s.id_stage}
             stage_mapping_cache = {
                 sm.external_id: sm
@@ -217,12 +227,13 @@ async def ingest_fifa_stages():
             for api_stage in api_stages:
                 if not api_stage.id_stage:
                     continue
-
+                logger.info(f"Processing stage {api_stage.name}: {api_stage}")
                 stage_mapping = stage_mapping_cache.get(api_stage.id_stage)
                 db_stage = stage_mapping.stage if stage_mapping else Stage()
                 db_stage.name = extract_name(api_stage.name)
                 db_stage.season_id = season_mapping.season_id
                 db_stage.level = api_stage.sequence_order
+                db_stage.stage_type = FIFA_STAGE_TYPE_MAP.get(api_stage.type, StageType.OTHER)
                 await db_stage.asave()
 
                 if not stage_mapping:

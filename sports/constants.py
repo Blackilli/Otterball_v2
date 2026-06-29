@@ -15,4 +15,9 @@ FIFA_GENDER_MAP: dict[fifa.Gender | None, models.Gender] = {
     fifa.Gender.UNKNOWN: models.Gender.OTHER,
 }
 
-FIFA_STAGE_TYPE_MAP = {}
+FIFA_STAGE_TYPE_MAP = {
+    fifa.StageType.GROUP: models.StageType.GROUP,
+    fifa.StageType.KNOCK_OUT: models.StageType.KNOCK_OUT,
+    fifa.StageType.LEAGUE: models.StageType.LEAGUE,
+    fifa.StageType.UNKNOWN: models.StageType.OTHER,
+}
