@@ -33,17 +33,21 @@ class PollCreationCog(commands.Cog):
     async def cog_load(self) -> None:
         logger.info("Initializing dynamic poll intervals from database...")
         try:
+            current_tz = timezone.get_current_timezone()
             distinct_times = set()
             async for config in (
                 PoolConfiguration.objects.filter(pool__is_active=True).select_related("pool").aiterator()
             ):
                 t = config.poll_creation_time
-                distinct_times.add(datetime.time(hour=t.hour, minute=t.minute))
+                distinct_times.add(datetime.time(hour=t.hour, minute=t.minute, tzinfo=current_tz))
 
             if distinct_times:
                 times_list = list(distinct_times)
                 self.poll_creation_loop.change_interval(time=times_list)
-                logger.info(f"Poll creation times: {times_list}")
+                now = timezone.now()
+                logger.info(
+                    f"Poll creation times: {times_list}. Now: {[datetime.time(hour=now.hour, minute=now.minute),]}"
+                )
             else:
                 self.poll_creation_loop.change_interval(time=datetime.time(hour=0, minute=0))
                 logger.info("No poll creation times found, setting to midnight.")
@@ -76,6 +80,7 @@ class PollCreationCog(commands.Cog):
         )
 
         async for guild_pool in guild_pools_iterator:
+            logger.info(f"Processing guild pool {guild_pool.id}...")
             if not guild_pool.pool:
                 logger.warning(f"Guild pool {guild_pool.id} has no pool, skipping.")
                 continue
