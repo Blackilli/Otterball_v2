@@ -100,6 +100,7 @@ class ActiveMatchMessage(models.Model):
     )
     thread_id = models.BigIntegerField()
     poll_message_id = models.BigIntegerField(unique=True)
+    poll_use_fallback_answer_ordering = models.BooleanField(default=False)
     is_poll_finalized = models.BooleanField(default=False)
     ticker_message_id = models.BigIntegerField(null=True, blank=True, unique=True)
     is_ticker_finalized = models.BooleanField(default=False)

@@ -3,7 +3,11 @@ import logging
 import discord
 from discord.ext import commands
 
-from discord_bot.constants import DISCORD_POLL_ANSWER_ORDER_MAP
+from discord_bot.constants import (
+    DISCORD_DRAWABLE_POLL_ANSWER_ORDER,
+    DISCORD_KO_POLL_ANSWER_ORDER,
+    DISCORD_POLL_ANSWER_ORDER_MAP,
+)
 from discord_bot.models import (
     ActiveMatchMessage,
     DiscordChannel,
@@ -117,6 +121,13 @@ class ReconciliationCog(commands.Cog):
                     logger.warning(f"Poll not found for match {match_msg.match_id}")
                     continue
                 answer_order = DISCORD_POLL_ANSWER_ORDER_MAP.get(match_msg.match.stage.stage_type)
+
+                if match_msg.poll_use_fallback_answer_ordering:
+                    # TODO: Fix this fallback
+                    if len(message.poll.answers) == 3:
+                        answer_order = DISCORD_DRAWABLE_POLL_ANSWER_ORDER
+                    elif len(message.poll.answers) == 2:
+                        answer_order = DISCORD_KO_POLL_ANSWER_ORDER
 
                 for answer in message.poll.answers:
                     if answer_order is None or len(answer_order) <= answer.id:
