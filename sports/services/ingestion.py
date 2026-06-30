@@ -386,18 +386,24 @@ async def ingest_fifa_live_matches():
                 old_home_score = db_match.home_score
                 old_away_score = db_match.away_score
                 new_status = FIFA_STATUS_MAP.get(api_match.match_status, DjangoMatchStatus.SCHEDULED)
+                new_home_score = (
+                    len(api_match.home_team.goals) or api_match.home_team_penalty_score or api_match.home_team.score
+                )
+                new_away_score = (
+                    len(api_match.away_team.goals) or api_match.away_team_penalty_score or api_match.away_team.score
+                )
 
                 if (
-                    old_home_score == api_match.home_team.score
-                    and old_away_score == api_match.away_team.score
+                    old_home_score == new_home_score
+                    and old_away_score == new_away_score
                     and db_match.status == new_status
                 ):
                     logger.debug(f"No change detected for match {db_match.id}")
                     continue
 
-                db_match.home_score = api_match.home_team.score if api_match.home_team.score is not None else 0
+                db_match.home_score = new_home_score
 
-                db_match.away_score = api_match.away_team.score if api_match.away_team.score is not None else 0
+                db_match.away_score = new_away_score
                 db_match.status = new_status
                 await db_match.asave()
                 if old_home_score != db_match.home_score or old_away_score != db_match.away_score:
