@@ -329,8 +329,12 @@ async def ingest_upcoming_matches(
                     match.match_status,
                     DjangoMatchStatus.SCHEDULED,
                 )
-                db_match.home_score = match.home_team_score
-                db_match.away_score = match.away_team_score
+                db_match.home_score = (
+                    match.home_team_penalty_score or match.aggregate_home_team_score or match.home_team_score
+                )
+                db_match.away_score = (
+                    match.away_team_penalty_score or match.aggregate_away_team_score or match.away_team_score
+                )
 
                 db_match.stage_id = stage_id
                 db_match.home_team_id = home_id
