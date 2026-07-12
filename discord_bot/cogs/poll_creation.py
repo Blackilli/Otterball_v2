@@ -32,6 +32,16 @@ class PollCreationCog(commands.Cog):
         self.bot = bot
 
     async def cog_load(self) -> None:
+        self.interval_sync_loop.start()
+
+    def cog_unload(self) -> None:
+        if self.interval_sync_loop.is_running():
+            self.interval_sync_loop.cancel()
+        if self.poll_creation_loop.is_running():
+            self.poll_creation_loop.cancel()
+
+    @tasks.loop(minutes=1)
+    async def interval_sync_loop(self):
         logger.info("Initializing dynamic poll intervals from database...")
         try:
             current_tz = timezone.get_current_timezone()
@@ -52,13 +62,10 @@ class PollCreationCog(commands.Cog):
             else:
                 self.poll_creation_loop.change_interval(time=datetime.time(hour=0, minute=0))
                 logger.info("No poll creation times found, setting to midnight.")
-
+            if not self.poll_creation_loop.is_running():
+                self.poll_creation_loop.start()
         except Exception as e:
             logger.error(f"Error loading poll creation times: {e}")
-        self.poll_creation_loop.start()
-
-    def cog_unload(self) -> None:
-        self.poll_creation_loop.cancel()
 
     @tasks.loop()
     async def poll_creation_loop(self):
@@ -165,8 +172,9 @@ class PollCreationCog(commands.Cog):
                     away_emoji = emojis.get(db_away_emoji.id if db_away_emoji else 0, "⚫")
 
                     content = f"# **{home_emoji} {match.home_team}** vs. **{match.away_team} {away_emoji}**"
-                    content += f"\n### 📅   {format_dt(match.kickoff, style='F')} "
-                    content += f"\n### ⏳   {format_dt(match.kickoff, style='R')}"
+                    content += f"\n### Stage: `{match.stage.name}`"
+                    content += f"\n### 📅       {format_dt(match.kickoff, style='F')}"
+                    content += f"\n### ⏳       {format_dt(match.kickoff, style='R')}"
                     content += f"\n-# Polls may close early, so don't vote on the last second"
 
                     duration = match.kickoff - timezone.now()
