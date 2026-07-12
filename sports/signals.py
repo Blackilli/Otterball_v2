@@ -31,6 +31,6 @@ def notify_match_update(sender, instance: Match, created: bool, **kwargs):
 
         message_json = payload.model_dump_json()
 
-        transaction.on_commit(lambda: redis_client.publish("match_update", message_json))
+        transaction.on_commit(lambda: redis_client.publish(settings.REDIS_MATCH_UPDATE_TOPIC, message_json))
     except Exception as e:
         logger.error(f"Error notifying match update: {e}")

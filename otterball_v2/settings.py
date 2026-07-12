@@ -181,3 +181,5 @@ LOGGING = {
         "": {"handlers": ["console"], "level": "INFO", "propagate": False},
     },
 }
+
+REDIS_MATCH_UPDATE_TOPIC = "match_update"

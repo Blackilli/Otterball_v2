@@ -32,7 +32,7 @@ class MatchTickerCog(commands.Cog):
 
         redis_connection = aioredis.from_url(settings.REDIS_URL)
         pubsub = redis_connection.pubsub()
-        await pubsub.subscribe("match-updates")
+        await pubsub.subscribe(settings.REDIS_MATCH_UPDATE_TOPIC)
 
         try:
             while True:
