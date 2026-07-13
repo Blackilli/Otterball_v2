@@ -182,39 +182,82 @@ class Prediction(models.Model):
     def __str__(self):
         return f"{self.user.username} -> {self.match} ({self.get_predicted_outcome_display()})"
 
-    async def aupdate_points(self, force: bool = False, cached_points: int | None = None):
+    async def aupdate_points(
+        self,
+        force: bool = False,
+        cached_points: int | None = None,
+        cached_outcome: MatchOutcome | None = None,
+        cached_match: Match | None = None,
+    ):
         if not force and self.is_processed:
             return
 
-        logger.info(f"Updating points for prediction {self.id}")
+        logger.info(f"Updating points asynchronously for prediction {self.id}")
 
-        match_obj = await Match.objects.aget(id=self.match_id)
+        outcome = cached_outcome
+        match_obj = cached_match
 
-        if self.predicted_outcome == match_obj.outcome:
-            if cached_points is not None:
-                self.points_awarded = cached_points
-            else:
-                try:
-                    stage_rule = await self.pool.stage_rules.aget(stage_id=match_obj.stage_id)
-                    self.points_awarded = stage_rule.points_per_correct
-                except PoolStageRule.DoesNotExist:
-                    try:
-                        fallback_rule = await self.pool.stage_rules.aget(stage=None)
-                        self.points_awarded = fallback_rule.points_per_correct
-                    except PoolStageRule.DoesNotExist:
-                        self.points_awarded = 3
-        else:
+        if outcome is None:
+            if not match_obj:
+                match_obj = await Match.objects.aget(id=self.match_id)
+            outcome = match_obj.outcome
+
+        if self.predicted_outcome != outcome:
             self.points_awarded = 0
+        elif cached_points is not None:
+            self.points_awarded = cached_points
+        else:
+            if not match_obj:
+                match_obj = await Match.objects.aget(id=self.match_id)
+            try:
+                stage_rule = await self.pool.stage_rules.aget(stage_id=match_obj.stage_id)
+                self.points_awarded = stage_rule.points_per_correct
+            except PoolStageRule.DoesNotExist:
+                try:
+                    fallback_rule = await self.pool.stage_rules.aget(stage=None)
+                    self.points_awarded = fallback_rule.points_per_correct
+                except PoolStageRule.DoesNotExist:
+                    self.points_awarded = 3
 
         self.is_processed = True
         await self.asave()
 
-    def update_points(self, force: bool = False):
+    def update_points(
+        self,
+        force: bool = False,
+        cached_points: int | None = None,
+        cached_outcome: MatchOutcome | None = None,
+        cached_match: Match | None = None,
+    ):
         if not force and self.is_processed:
             return
+
         logger.info(f"Updating points for prediction {self.id}")
-        if self.is_correct:
-            self.points_awarded = self.pool.stage_rules.get(stage=self.match.stage).points_per_correct
+        outcome = cached_outcome
+        match_obj = cached_match
+
+        if outcome is None:
+            if not match_obj:
+                match_obj = Match.objects.get(id=self.match_id)
+            outcome = match_obj.outcome
+
+        if self.predicted_outcome != outcome:
+            self.points_awarded = 0
+        elif cached_points is not None:
+            self.points_awarded = cached_points
+        else:
+            if not match_obj:
+                match_obj = Match.objects.get(id=self.match_id)
+            try:
+                stage_rule = self.pool.stage_rules.get(stage_id=match_obj.stage_id)
+                self.points_awarded = stage_rule.points_per_correct
+            except PoolStageRule.DoesNotExist:
+                try:
+                    fallback_rule = self.pool.stage_rules.get(stage=None)
+                    self.points_awarded = fallback_rule.points_per_correct
+                except PoolStageRule.DoesNotExist:
+                    self.points_awarded = 3
+
         self.is_processed = True
         self.save()
 

@@ -26,7 +26,7 @@ class Command(BaseCommand):
 
         query = Prediction.objects.filter(
             match__status=MatchStatus.FINISHED,
-        ).select_related("match", "pool")
+        ).select_related("match")
 
         if not options["all"]:
             query = query.filter(is_processed=False)
@@ -43,6 +43,8 @@ class Command(BaseCommand):
             await prediction.aupdate_points(
                 force=options["all"],
                 cached_points=points,
+                cached_outcome=prediction.match.outcome,
+                cached_match=prediction.match,
             )
             counter += 1
         logger.info(f"Updated points for {counter} predictions")
