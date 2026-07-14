@@ -24,6 +24,7 @@ db.sqlite3
 *.log
 *.sqlite3
 datadump.json
+backups/
 
 media/
 static/
