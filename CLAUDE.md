@@ -27,6 +27,9 @@ uv run python manage.py migrate
 uv run black .
 uv run isort .
 uv run manage.py test   # also runs automatically as a local pre-commit hook (django-test)
+
+uv run python manage.py export_db [output.json.gz]    # clean full DB export (natural keys, skips contenttypes/permissions/sessions/celery results)
+uv run python manage.py import_db backups/foo.json.gz --flush   # restore a dump; --flush wipes existing rows first to avoid PK conflicts
 ```
 
 Local Docker stack: `docker compose up -d --build` (services: `web`, `bot`, `worker`, `beat`, `db` (Postgres 18), `valkey` (Redis-compatible cache/broker)). All four app services (`web`, `bot`, `worker`, `beat`) build from the same image/Dockerfile and just run different commands — keep that in mind when a change needs to reach all of them.
