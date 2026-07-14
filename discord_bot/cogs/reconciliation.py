@@ -84,7 +84,7 @@ class ReconciliationCog(commands.Cog):
                     },
                 )
 
-                await DiscordChannel.objects.filter(
+                await DiscordGuildRole.objects.filter(
                     guild_id=guild_row.id,
                     is_active=True,
                 ).exclude(
@@ -99,7 +99,7 @@ class ReconciliationCog(commands.Cog):
             .aiterator()
         }
 
-        predictions_to_sync = []
+        synced_count = 0
 
         async for match_msg in (
             ActiveMatchMessage.objects.filter(is_poll_finalized=False)
@@ -129,6 +129,7 @@ class ReconciliationCog(commands.Cog):
                     elif len(message.poll.answers) == 2:
                         answer_order = DISCORD_KO_POLL_ANSWER_ORDER
 
+                match_predictions = []
                 for answer in message.poll.answers:
                     if answer_order is None or len(answer_order) <= answer.id:
                         logger.error(
@@ -156,28 +157,29 @@ class ReconciliationCog(commands.Cog):
                         else:
                             user_id = profile.user_id
 
-                        predictions_to_sync.append(
-                            {
-                                "pool_id": match_msg.pool_id,
-                                "user_id": user_id,
-                                "match_id": match_msg.match_id,
-                                "predicted_outcome": predicted_outcome,
-                            }
-                        )
+                        match_predictions.append((user_id, predicted_outcome))
             except (discord.NotFound, discord.Forbidden) as e:
                 logger.warning(
                     f"Skipping poll synchronization for match {match_msg.match_id} due to discord permissions: {e}"
                 )
                 continue
 
-        synced_count = 0
-        for pred_data in predictions_to_sync:
-            await Prediction.objects.aupdate_or_create(
-                pool_id=pred_data["pool_id"],
-                user_id=pred_data["user_id"],
-                match_id=pred_data["match_id"],
-                defaults={"predicted_outcome": pred_data["predicted_outcome"]},
-            )
-            synced_count += 1
+            # Full re-derivation: anyone not currently voting on this match's poll
+            # loses their prediction, so a retraction that happened while the bot
+            # was offline is reflected too, not just additions/changes.
+            voted_user_ids = {user_id for user_id, _ in match_predictions}
+            await Prediction.objects.filter(
+                pool_id=match_msg.pool_id,
+                match_id=match_msg.match_id,
+            ).exclude(user_id__in=voted_user_ids).adelete()
+
+            for user_id, predicted_outcome in match_predictions:
+                await Prediction.objects.aupdate_or_create(
+                    pool_id=match_msg.pool_id,
+                    user_id=user_id,
+                    match_id=match_msg.match_id,
+                    defaults={"predicted_outcome": predicted_outcome},
+                )
+                synced_count += 1
 
         logger.info(f"Reconciliation complete. Successfully synchronized {synced_count} live votes.")
