@@ -403,7 +403,7 @@ class Team(BaseModel):
     id_association: str | None = Field(None, alias="IdAssociation")
     id_city: str | None = Field(None, alias="IdCity")
     headquarters: str | None = Field(None, alias="Headquarters")
-    training_center: str | None = Field(None, alias="TrainingCenter")
+    training_center: str | None = Field(None, alias="TrainingCentre")
     official_site: str | None = Field(None, alias="OfficialSite")
     city: str | None = Field(None, alias="City")
     id_country: str | None = Field(None, alias="IdCountry")
@@ -782,7 +782,7 @@ class LiveMatchTeam(BaseModel):
     bookings: list[Booking] | None = Field(None, alias="Bookings")
     goals: list[Goal] | None = Field(None, alias="Goals")
     substitutions: list[Substitution] | None = Field(None, alias="Substitutions")
-    staff: list[LiveMatchStaff] | None = Field(None, alias="Staff")
+    staff: list[LiveMatchStaff] | None = Field(None, alias="Staffs")
     football_type: FootballType | None = Field(None, alias="FootballType")
     gender: Gender | None = Field(None, alias="Gender")
     id_association: str | None = Field(None, alias="IdAssociation")
@@ -821,8 +821,8 @@ class LiveMatch(BaseModel):
     home_team: LiveMatchTeam | None = Field(None, alias="HomeTeam")
     away_team: LiveMatchTeam | None = Field(None, alias="AwayTeam")
     ball_possession: Possession | None = Field(None, alias="BallPossession")
-    territorial_possession: Possession | None = Field(None, alias="TerritorialPossession")
-    territorial_third_possession: Possession | None = Field(None, alias="TerritorialThirdPossession")
+    territorial_possession: Possession | None = Field(None, alias="TerritorialPossesion")
+    territorial_third_possession: Possession | None = Field(None, alias="TerritorialThirdPossesion")
     officials: list[MatchOfficial] | None = Field(None, alias="Officials")
     match_status: MatchStatus | None = Field(None, alias="MatchStatus")
     group_name: list[LocaleDescription] | None = Field(None, alias="GroupName")
@@ -1104,7 +1104,7 @@ class FifaClient:
         if gender:
             params["gender"] = gender.value
         if competition_type:
-            params["competitionType"] = competition_type.value
+            params["type"] = competition_type.value
         if age_type:
             params["ageType"] = age_type.value
         if id_client:

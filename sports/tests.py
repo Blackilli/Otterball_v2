@@ -1,14 +1,37 @@
-from unittest.mock import patch
+import datetime
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from django.conf import settings
 from django.test import TestCase
 from django.utils import timezone
 from PIL import Image
 
-from sports.integrations.fifa import LocaleDescription
-from sports.models import Competition, Match, MatchOutcome, MatchStatus, Season, Stage, StageType, Team
+from sports.integrations.fifa import Competition as FifaCompetition
+from sports.integrations.fifa import CompetitionType, FifaClient
+from sports.integrations.fifa import Gender as FifaGender
+from sports.integrations.fifa import LiveMatch, LiveMatchTeam, LocaleDescription
+from sports.integrations.fifa import MatchStatus as FifaMatchStatus
+from sports.models import (
+    Competition,
+    CompetitionMapping,
+    Gender,
+    Match,
+    MatchMapping,
+    MatchOutcome,
+    MatchStatus,
+    Season,
+    SportsProvider,
+    Stage,
+    StageType,
+    Team,
+)
 from sports.schemas import MatchUpdatePayload
-from sports.services.ingestion import _process_and_format_image, extract_name
+from sports.services.ingestion import (
+    _process_and_format_image,
+    extract_name,
+    ingest_all_fifa_competitions,
+    ingest_fifa_live_matches,
+)
 
 
 class MatchOutcomeTests(TestCase):
@@ -155,3 +178,162 @@ class NotifyMatchUpdateSignalTests(TestCase):
             )
 
         self.mock_redis.publish.assert_not_called()
+
+
+class FakeFifaClient:
+    """Stands in for sports.integrations.fifa.FifaClient inside `async with
+    FifaClient() as client:` blocks - only implements what ingestion.py calls."""
+
+    def __init__(self, competitions=None, live_matches_by_external_id=None):
+        self._competitions = competitions or []
+        self._live_matches = live_matches_by_external_id or {}
+        self.requested_live_match_ids = []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        return False
+
+    async def get_competitions_all(self, *args, **kwargs):
+        for competition in self._competitions:
+            yield competition
+
+    async def get_live_match_by_id(self, match_id, *args, **kwargs):
+        self.requested_live_match_ids.append(match_id)
+        return self._live_matches.get(match_id)
+
+
+class IngestAllFifaCompetitionsTests(TestCase):
+    """Covers ingest_all_fifa_competitions (sports/services/ingestion.py): it
+    should create a Competition + CompetitionMapping for each unseen FIFA
+    competition and skip ones already mapped, using field names verified
+    against the real FIFA swagger spec at api.fifa.com/ApiFdcpSwagger/docs/v1."""
+
+    async def test_skips_already_mapped_competitions_and_creates_new_ones(self):
+        existing_competition = await Competition.objects.acreate(name="Existing Cup")
+        await CompetitionMapping.objects.acreate(
+            provider=SportsProvider.FIFA, external_id="EXISTING", competition=existing_competition
+        )
+
+        already_mapped = FifaCompetition(
+            IdCompetition="EXISTING",
+            Name=[{"Locale": "en-GB", "Description": "Existing Cup (renamed)"}],
+        )
+        brand_new = FifaCompetition(
+            IdCompetition="NEW1",
+            Name=[{"Locale": "en-GB", "Description": "FIFA World Cup"}],
+            Gender=FifaGender.FEMALE.value,
+        )
+        fake_client = FakeFifaClient(competitions=[already_mapped, brand_new])
+
+        with patch("sports.services.ingestion.FifaClient", return_value=fake_client):
+            await ingest_all_fifa_competitions()
+
+        self.assertEqual(await Competition.objects.acount(), 2)
+        new_competition = await Competition.objects.aget(name="FIFA World Cup")
+        self.assertEqual(new_competition.gender, Gender.FEMALE)
+        self.assertTrue(
+            await CompetitionMapping.objects.filter(
+                provider=SportsProvider.FIFA, external_id="NEW1", competition=new_competition
+            ).aexists()
+        )
+        # The already-mapped competition's name must not have been touched.
+        await existing_competition.arefresh_from_db()
+        self.assertEqual(existing_competition.name, "Existing Cup")
+
+
+class IngestFifaLiveMatchesTests(TestCase):
+    """Covers ingest_fifa_live_matches (sports/services/ingestion.py): the
+    LIVE-or-kicking-off-soon filter, and the score/status update from a
+    LiveMatch response using field names verified against the real spec."""
+
+    def setUp(self):
+        self.competition = Competition.objects.create(name="World Cup")
+        self.season = Season.objects.create(name="2026 World Cup", competition=self.competition, year=2026)
+        self.stage = Stage.objects.create(season=self.season, name="Group A", stage_type=StageType.GROUP)
+        self.home_team = Team.objects.create(name="Germany")
+        self.away_team = Team.objects.create(name="Brazil")
+
+    async def amake_match_with_mapping(self, external_id, **kwargs):
+        defaults = {
+            "stage": self.stage,
+            "home_team": self.home_team,
+            "away_team": self.away_team,
+            "kickoff": timezone.now(),
+        }
+        defaults.update(kwargs)
+        match = await Match.objects.acreate(**defaults)
+        await MatchMapping.objects.acreate(provider=SportsProvider.FIFA, external_id=external_id, match=match)
+        return match
+
+    async def test_no_eligible_matches_never_touches_the_fifa_client(self):
+        await self.amake_match_with_mapping("FINISHED1", status=MatchStatus.FINISHED, home_score=1, away_score=0)
+
+        with patch("sports.services.ingestion.FifaClient") as mock_client_cls:
+            await ingest_fifa_live_matches()
+
+        mock_client_cls.assert_not_called()
+
+    async def test_queries_only_live_and_soon_matches_and_applies_score_updates(self):
+        live_match = await self.amake_match_with_mapping("LIVE1", status=MatchStatus.LIVE, home_score=0, away_score=0)
+        soon_match = await self.amake_match_with_mapping(
+            "SOON1",
+            status=MatchStatus.SCHEDULED,
+            kickoff=timezone.now() + datetime.timedelta(minutes=10),
+        )
+        await self.amake_match_with_mapping(
+            "LATER1",
+            status=MatchStatus.SCHEDULED,
+            kickoff=timezone.now() + datetime.timedelta(minutes=30),
+        )
+        await self.amake_match_with_mapping("FINISHED1", status=MatchStatus.FINISHED, home_score=1, away_score=0)
+
+        live_update = LiveMatch(
+            IdMatch="LIVE1",
+            IdStage="S1",
+            IdSeason="SE1",
+            IdCompetition="C1",
+            MatchStatus=FifaMatchStatus.LIVE.value,
+            HomeTeam=LiveMatchTeam(Score=2, IdTeam="T1", Goals=[{"IdGoal": "g1"}, {"IdGoal": "g2"}]),
+            AwayTeam=LiveMatchTeam(Score=1, IdTeam="T2", Goals=[{"IdGoal": "g3"}]),
+        )
+        fake_client = FakeFifaClient(live_matches_by_external_id={"LIVE1": live_update, "SOON1": None})
+
+        with patch("sports.services.ingestion.FifaClient", return_value=fake_client):
+            await ingest_fifa_live_matches()
+
+        self.assertCountEqual(fake_client.requested_live_match_ids, ["LIVE1", "SOON1"])
+
+        await live_match.arefresh_from_db()
+        self.assertEqual(live_match.home_score, 2)
+        self.assertEqual(live_match.away_score, 1)
+        self.assertEqual(live_match.status, MatchStatus.LIVE)
+
+        await soon_match.arefresh_from_db()
+        self.assertIsNone(soon_match.home_score)
+        self.assertIsNone(soon_match.away_score)
+
+
+class FifaClientQueryParamTests(TestCase):
+    """Covers FifaClient.get_competitions_all's query-param construction: the
+    competition_type filter must be sent as `type`, not `competitionType` -
+    verified against the real api.fifa.com/ApiFdcpSwagger/docs/v1 spec, which
+    the client previously got wrong (silently, since nothing called it with
+    competition_type set)."""
+
+    async def test_competition_type_filter_uses_the_real_query_param_name(self):
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_response.json.return_value = {"Results": [], "ContinuationToken": None, "ContinuationHash": None}
+
+        client = FifaClient()
+        client._client = MagicMock()
+        client._client.get = AsyncMock(return_value=mock_response)
+
+        async for _ in client.get_competitions_all(competition_type=CompetitionType.INTERNATIONAL):
+            pass
+
+        _, kwargs = client._client.get.call_args
+        self.assertEqual(kwargs["params"].get("type"), CompetitionType.INTERNATIONAL.value)
+        self.assertNotIn("competitionType", kwargs["params"])
