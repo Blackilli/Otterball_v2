@@ -1,0 +1,317 @@
+{
+  "ContinuationToken": null,
+  "ContinuationHash": null,
+  "Results": [
+    {
+      "IdCompetition": "17",
+      "IdSeason": "285023",
+      "IdStage": "289290",
+      "IdGroup": null,
+      "Weather": null,
+      "Attendance": null,
+      "IdMatch": "400021540",
+      "MatchDay": null,
+      "StageName": [
+        {
+          "Locale": "en-GB",
+          "Description": "Semi-final"
+        }
+      ],
+      "GroupName": [],
+      "CompetitionName": [
+        {
+          "Locale": "en-GB",
+          "Description": "FIFA World Cup™"
+        }
+      ],
+      "SeasonName": [
+        {
+          "Locale": "en-GB",
+          "Description": "FIFA World Cup 2026™"
+        }
+      ],
+      "SeasonShortName": [],
+      "Date": "2026-07-15T19:00:00Z",
+      "LocalDate": "2026-07-15T15:00:00Z",
+      "Home": {
+        "Score": null,
+        "Side": null,
+        "IdTeam": "43942",
+        "PictureUrl": "https://api.fifa.com/api/v3/picture/flags-{format}-{size}/ENG",
+        "IdCountry": "ENG",
+        "Tactics": null,
+        "TeamType": 1,
+        "AgeType": 7,
+        "TeamName": [
+          {
+            "Locale": "en-GB",
+            "Description": "England"
+          }
+        ],
+        "Abbreviation": "ENG",
+        "ShortClubName": "England",
+        "FootballType": 0,
+        "Gender": 1,
+        "IdAssociation": "ENG"
+      },
+      "Away": {
+        "Score": null,
+        "Side": null,
+        "IdTeam": "43922",
+        "PictureUrl": "https://api.fifa.com/api/v3/picture/flags-{format}-{size}/ARG",
+        "IdCountry": "ARG",
+        "Tactics": null,
+        "TeamType": 1,
+        "AgeType": 7,
+        "TeamName": [
+          {
+            "Locale": "en-GB",
+            "Description": "Argentina"
+          }
+        ],
+        "Abbreviation": "ARG",
+        "ShortClubName": "Argentina",
+        "FootballType": 0,
+        "Gender": 1,
+        "IdAssociation": "ARG"
+      },
+      "HomeTeamScore": null,
+      "AwayTeamScore": null,
+      "AggregateHomeTeamScore": null,
+      "AggregateAwayTeamScore": null,
+      "HomeTeamPenaltyScore": null,
+      "AwayTeamPenaltyScore": null,
+      "LastPeriodUpdate": null,
+      "Leg": null,
+      "IsHomeMatch": null,
+      "Stadium": {
+        "IdStadium": "400098290",
+        "Name": [
+          {
+            "Locale": "en-GB",
+            "Description": "Atlanta Stadium"
+          }
+        ],
+        "Capacity": null,
+        "WebAddress": null,
+        "Built": null,
+        "Roof": false,
+        "Turf": null,
+        "IdCity": "400256355",
+        "CityName": [
+          {
+            "Locale": "en-GB",
+            "Description": "Atlanta"
+          }
+        ],
+        "IdCountry": "USA",
+        "PostalCode": null,
+        "Street": null,
+        "Email": null,
+        "Fax": null,
+        "Phone": null,
+        "AffiliationCountry": null,
+        "AffiliationRegion": null,
+        "Latitude": null,
+        "Longitude": null,
+        "Length": null,
+        "Width": null,
+        "Properties": {
+          "IdIFES": "5044204"
+        },
+        "IsUpdateable": null
+      },
+      "IsTicketSalesAllowed": null,
+      "MatchTime": null,
+      "SecondHalfTime": null,
+      "FirstHalfTime": null,
+      "FirstHalfExtraTime": null,
+      "SecondHalfExtraTime": null,
+      "Winner": null,
+      "MatchReportUrl": null,
+      "PlaceHolderA": "W99",
+      "PlaceHolderB": "W100",
+      "BallPossession": null,
+      "Officials": [
+        {
+          "IdCountry": "USA",
+          "OfficialId": "392406",
+          "NameShort": [
+            {
+              "Locale": "en-GB",
+              "Description": "Ismail ELFATH"
+            }
+          ],
+          "Name": [
+            {
+              "Locale": "en-GB",
+              "Description": "Ismail Elfath"
+            }
+          ],
+          "OfficialType": 1,
+          "TypeLocalized": [
+            {
+              "Locale": "en-GB",
+              "Description": "Referee"
+            }
+          ]
+        },
+        {
+          "IdCountry": "ITA",
+          "OfficialId": "415965",
+          "NameShort": [
+            {
+              "Locale": "en-GB",
+              "Description": "Maurizio MARIANI"
+            }
+          ],
+          "Name": [
+            {
+              "Locale": "en-GB",
+              "Description": "Maurizio Mariani"
+            }
+          ],
+          "OfficialType": 4,
+          "TypeLocalized": [
+            {
+              "Locale": "en-GB",
+              "Description": "Fourth official"
+            }
+          ]
+        }
+      ],
+      "MatchStatus": 1,
+      "ResultType": 0,
+      "MatchNumber": 102,
+      "TimeDefined": true,
+      "OfficialityStatus": 0,
+      "MatchLegInfo": null,
+      "Properties": {
+        "IdIFES": "151708"
+      },
+      "IsUpdateable": null
+    },
+    {
+      "IdCompetition": "17",
+      "IdSeason": "285023",
+      "IdStage": "289292",
+      "IdGroup": null,
+      "Weather": null,
+      "Attendance": null,
+      "IdMatch": "400021543",
+      "MatchDay": null,
+      "StageName": [
+        {
+          "Locale": "en-GB",
+          "Description": "Final"
+        }
+      ],
+      "GroupName": [],
+      "CompetitionName": [
+        {
+          "Locale": "en-GB",
+          "Description": "FIFA World Cup™"
+        }
+      ],
+      "SeasonName": [
+        {
+          "Locale": "en-GB",
+          "Description": "FIFA World Cup 2026™"
+        }
+      ],
+      "SeasonShortName": [],
+      "Date": "2026-07-19T19:00:00Z",
+      "LocalDate": "2026-07-19T15:00:00Z",
+      "Home": {
+        "Score": null,
+        "Side": null,
+        "IdTeam": "43969",
+        "PictureUrl": "https://api.fifa.com/api/v3/picture/flags-{format}-{size}/ESP",
+        "IdCountry": "ESP",
+        "Tactics": null,
+        "TeamType": 1,
+        "AgeType": 7,
+        "TeamName": [
+          {
+            "Locale": "en-GB",
+            "Description": "Spain"
+          }
+        ],
+        "Abbreviation": "ESP",
+        "ShortClubName": "Spain",
+        "FootballType": 0,
+        "Gender": 1,
+        "IdAssociation": "ESP"
+      },
+      "Away": null,
+      "HomeTeamScore": null,
+      "AwayTeamScore": null,
+      "AggregateHomeTeamScore": null,
+      "AggregateAwayTeamScore": null,
+      "HomeTeamPenaltyScore": null,
+      "AwayTeamPenaltyScore": null,
+      "LastPeriodUpdate": null,
+      "Leg": null,
+      "IsHomeMatch": null,
+      "Stadium": {
+        "IdStadium": "400257536",
+        "Name": [
+          {
+            "Locale": "en-GB",
+            "Description": "New York/New Jersey Stadium"
+          }
+        ],
+        "Capacity": null,
+        "WebAddress": null,
+        "Built": null,
+        "Roof": false,
+        "Turf": null,
+        "IdCity": "400021919",
+        "CityName": [
+          {
+            "Locale": "en-GB",
+            "Description": "New Jersey"
+          }
+        ],
+        "IdCountry": "USA",
+        "PostalCode": null,
+        "Street": null,
+        "Email": null,
+        "Fax": null,
+        "Phone": null,
+        "AffiliationCountry": null,
+        "AffiliationRegion": null,
+        "Latitude": null,
+        "Longitude": null,
+        "Length": null,
+        "Width": null,
+        "Properties": {
+          "IdIFES": "5003000"
+        },
+        "IsUpdateable": null
+      },
+      "IsTicketSalesAllowed": null,
+      "MatchTime": null,
+      "SecondHalfTime": null,
+      "FirstHalfTime": null,
+      "FirstHalfExtraTime": null,
+      "SecondHalfExtraTime": null,
+      "Winner": null,
+      "MatchReportUrl": null,
+      "PlaceHolderA": "W101",
+      "PlaceHolderB": "W102",
+      "BallPossession": null,
+      "Officials": [],
+      "MatchStatus": 1,
+      "ResultType": 0,
+      "MatchNumber": 104,
+      "TimeDefined": true,
+      "OfficialityStatus": 0,
+      "MatchLegInfo": null,
+      "Properties": {
+        "IdIFES": "151710"
+      },
+      "IsUpdateable": null
+    }
+  ]
+}

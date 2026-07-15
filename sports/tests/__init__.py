@@ -27,7 +27,7 @@ from sports.integrations.fifa import (
     LocaleDescription,
 )
 from sports.integrations.fifa import MatchStatus as FifaMatchStatus
-from sports.integrations.fifa import MatchTeam
+from sports.integrations.fifa import MatchTeam, ResultType
 from sports.integrations.fifa import Season as FifaSeason
 from sports.integrations.fifa import Stage as FifaStage
 from sports.integrations.fifa import Substitution
@@ -421,6 +421,58 @@ class RealFifaApiResponseTests(TestCase):
 
         parsed = TypeAdapter(IApiMultipleResultsPaged[FifaCompetitionMatch]).validate_python(page)
         self.assertEqual(len(parsed.results), len(page["Results"]))
+
+    def test_scheduled_matches_response(self):
+        """Covers not-yet-played matches, including the World Cup 2026 final,
+        which - as of this fixture's capture - has only one finalist decided:
+        Home is Spain, Away is null with PlaceHolderA/B ("W101"/"W102")
+        pointing at the still-undecided semi-final winner."""
+        page = load_fixture("matches_scheduled.json")
+        for match in page["Results"]:
+            self.assert_all_keys_mapped(FifaCompetitionMatch, match, f"Match {match['IdMatch']}")
+            self.assert_all_keys_mapped(MatchTeam, match.get("Home"), f"Match {match['IdMatch']} Home")
+            self.assert_all_keys_mapped(MatchTeam, match.get("Away"), f"Match {match['IdMatch']} Away")
+
+        parsed = TypeAdapter(IApiMultipleResultsPaged[FifaCompetitionMatch]).validate_python(page)
+        by_id = {m.id_match: m for m in parsed.results}
+
+        semifinal = by_id["400021540"]
+        self.assertIsNotNone(semifinal.home)
+        self.assertIsNotNone(semifinal.away)
+
+        final = by_id["400021543"]
+        self.assertIsNotNone(final.home)
+        self.assertIsNone(final.away)
+        self.assertEqual(final.place_holder_a, "W101")
+        self.assertEqual(final.place_holder_b, "W102")
+
+    def test_finished_matches_by_result_type_response(self):
+        """Covers the three ways a knockout match can be decided: regular
+        time, extra time, and a penalty shootout (with penalty scores set
+        alongside the 90-minute score that ended level)."""
+        page = load_fixture("matches_result_types.json")
+        for match in page["Results"]:
+            self.assert_all_keys_mapped(FifaCompetitionMatch, match, f"Match {match['IdMatch']}")
+            self.assert_all_keys_mapped(MatchTeam, match.get("Home"), f"Match {match['IdMatch']} Home")
+            self.assert_all_keys_mapped(MatchTeam, match.get("Away"), f"Match {match['IdMatch']} Away")
+
+        parsed = TypeAdapter(IApiMultipleResultsPaged[FifaCompetitionMatch]).validate_python(page)
+        by_id = {m.id_match: m for m in parsed.results}
+
+        normal_result = by_id["400021518"]
+        self.assertEqual(normal_result.result_type, ResultType.NORMAL_RESULT)
+        self.assertIsNone(normal_result.home_team_penalty_score)
+
+        penalty_shootout = by_id["400021513"]
+        self.assertEqual(penalty_shootout.result_type, ResultType.PENALTY_SHOOTOUT)
+        self.assertEqual(penalty_shootout.home_team_score, penalty_shootout.away_team_score)
+        self.assertIsNotNone(penalty_shootout.home_team_penalty_score)
+        self.assertIsNotNone(penalty_shootout.away_team_penalty_score)
+        self.assertNotEqual(penalty_shootout.home_team_penalty_score, penalty_shootout.away_team_penalty_score)
+
+        extra_time = by_id["400021525"]
+        self.assertEqual(extra_time.result_type, ResultType.EXTRA_TIME)
+        self.assertIsNone(extra_time.home_team_penalty_score)
 
     def test_teams_response(self):
         page = load_fixture("teams_national.json")
