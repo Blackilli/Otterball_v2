@@ -1,40 +1,45 @@
 [project]
 name = "otterball-v2"
 version = "0.1.0"
+description = "Django + Discord bot sports prediction platform built around the FIFA World Cup"
+readme = "Readme.md"
+license = "MIT"
 requires-python = ">=3.14"
 dependencies = [
     "aiolimiter",
-    "basedpyright",
-    "black",
     "celery",
-    "celery-types",
     "discord-py",
     "django",
     "django-celery-beat",
     "django-celery-results",
     "django-redis",
-    "django-stubs",
     "gunicorn",
     "httpx2",
     "pillow",
     "psycopg2-binary",
     "pydantic",
-    "pyrefly",
     "redis",
     "rich",
-    "uuid",
     "whitenoise",
 ]
 
+[project.urls]
+Repository = "https://github.com/Blackilli/Otterball_v2"
+
 [dependency-groups]
 dev = [
+    "basedpyright",
+    "black",
+    "celery-types",
+    "django-stubs",
     "django-upgrade>=1.30.0",
     "isort>=8.0.1",
     "pre-commit>=4.6.0",
+    "pyrefly",
     "yamllint>=1.38.0",
 ]
 [tool.black]
-target-version = ["py314",]
+target-version = ["py314"]
 line_length = 118
 
 [tool.isort]
