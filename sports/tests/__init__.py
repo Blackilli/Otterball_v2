@@ -41,10 +41,14 @@ from sports.models import (
     MatchOutcome,
     MatchStatus,
     Season,
+    SeasonMapping,
+    Sport,
     SportsProvider,
     Stage,
+    StageMapping,
     StageType,
     Team,
+    TeamMapping,
 )
 from sports.schemas import MatchUpdatePayload
 from sports.services.ingestion import (
@@ -52,6 +56,7 @@ from sports.services.ingestion import (
     extract_name,
     ingest_all_fifa_competitions,
     ingest_fifa_live_matches,
+    ingest_upcoming_matches,
 )
 
 
@@ -205,9 +210,10 @@ class FakeFifaClient:
     """Stands in for sports.integrations.fifa.FifaClient inside `async with
     FifaClient() as client:` blocks - only implements what ingestion.py calls."""
 
-    def __init__(self, competitions=None, live_matches_by_external_id=None):
+    def __init__(self, competitions=None, live_matches_by_external_id=None, matches=None):
         self._competitions = competitions or []
         self._live_matches = live_matches_by_external_id or {}
+        self._matches = matches or []
         self.requested_live_match_ids = []
 
     async def __aenter__(self):
@@ -223,6 +229,10 @@ class FakeFifaClient:
     async def get_live_match_by_id(self, match_id, *args, **kwargs):
         self.requested_live_match_ids.append(match_id)
         return self._live_matches.get(match_id)
+
+    async def get_matches(self, *args, **kwargs):
+        for match in self._matches:
+            yield match
 
 
 class IngestAllFifaCompetitionsTests(TestCase):
@@ -504,3 +514,118 @@ class RealFifaApiResponseTests(TestCase):
 
         live_match = LiveMatch.model_validate(data)
         self.assertEqual(live_match.id_match, "400021541")
+
+
+class IngestUpcomingMatchesOutcomeTests(TestCase):
+    """Covers ingest_upcoming_matches (sports/services/ingestion.py) against
+    the matches_result_types.json fixture, focusing on whether the derived
+    Match.outcome ends up correct. ingest_upcoming_matches prefers the
+    penalty score over the regular-time score when one exists
+    (`match.home_team_penalty_score or ... or match.home_team_score`), which
+    matters a lot here: the penalty-shootout match's 90-minute score was a
+    1-1 draw, and if that raw score were stored instead of the penalty
+    score, Match.outcome would wrongly report a DRAW for a match that had a
+    real winner - scoring every prediction on it incorrectly."""
+
+    def setUp(self):
+        self.competition = Competition.objects.create(name="FIFA World Cup", sport=Sport.SOCCER, is_featured=True)
+        CompetitionMapping.objects.create(
+            provider=SportsProvider.FIFA, external_id="17", competition=self.competition
+        )
+        self.season = Season.objects.create(
+            name="FIFA World Cup 2026", competition=self.competition, year=2026, is_active=True
+        )
+        SeasonMapping.objects.create(provider=SportsProvider.FIFA, external_id="285023", season=self.season)
+
+        self.stage = Stage.objects.create(season=self.season, name="Round of 32", stage_type=StageType.KNOCK_OUT)
+        StageMapping.objects.create(provider=SportsProvider.FIFA, external_id="289287", stage=self.stage)
+
+        for external_id, name in [
+            ("43883", "South Africa"),
+            ("43899", "Canada"),
+            ("43948", "Germany"),
+            ("43928", "Paraguay"),
+            ("43935", "Belgium"),
+            ("43879", "Senegal"),
+        ]:
+            team = Team.objects.create(name=name)
+            TeamMapping.objects.create(provider=SportsProvider.FIFA, external_id=external_id, team=team)
+
+    async def test_result_types_produce_the_correct_outcome(self):
+        page = load_fixture("matches_result_types.json")
+        parsed = TypeAdapter(IApiMultipleResultsPaged[FifaCompetitionMatch]).validate_python(page)
+        fake_client = FakeFifaClient(matches=parsed.results)
+
+        with patch("sports.services.ingestion.FifaClient", return_value=fake_client):
+            await ingest_upcoming_matches()
+
+        matches_by_external_id = {
+            mm.external_id: mm.match
+            async for mm in MatchMapping.objects.select_related("match").filter(provider=SportsProvider.FIFA)
+        }
+        self.assertEqual(set(matches_by_external_id.keys()), {"400021518", "400021513", "400021525"})
+
+        normal_result = matches_by_external_id["400021518"]
+        self.assertEqual(normal_result.home_score, 0)
+        self.assertEqual(normal_result.away_score, 1)
+        self.assertEqual(normal_result.outcome, MatchOutcome.AWAY_WIN)
+
+        # 90-minute score was 1-1; ingestion must prefer the penalty score
+        # (3-4) so the outcome reflects who actually won, not a draw.
+        penalty_shootout = matches_by_external_id["400021513"]
+        self.assertEqual(penalty_shootout.home_score, 3)
+        self.assertEqual(penalty_shootout.away_score, 4)
+        self.assertEqual(penalty_shootout.outcome, MatchOutcome.AWAY_WIN)
+
+        extra_time = matches_by_external_id["400021525"]
+        self.assertEqual(extra_time.home_score, 3)
+        self.assertEqual(extra_time.away_score, 2)
+        self.assertEqual(extra_time.outcome, MatchOutcome.HOME_WIN)
+
+
+class IngestUpcomingMatchesUndecidedOpponentTests(TestCase):
+    """Covers ingest_upcoming_matches against matches_scheduled.json: a
+    fully-decided match should be ingested normally, while a match with an
+    undecided opponent (the World Cup 2026 final, Away=null) must be skipped
+    entirely rather than crash - Match.home_team/away_team are required
+    FKs, so there's nothing valid to create yet."""
+
+    def setUp(self):
+        self.competition = Competition.objects.create(name="FIFA World Cup", sport=Sport.SOCCER, is_featured=True)
+        CompetitionMapping.objects.create(
+            provider=SportsProvider.FIFA, external_id="17", competition=self.competition
+        )
+        self.season = Season.objects.create(
+            name="FIFA World Cup 2026", competition=self.competition, year=2026, is_active=True
+        )
+        SeasonMapping.objects.create(provider=SportsProvider.FIFA, external_id="285023", season=self.season)
+
+        self.semifinal_stage = Stage.objects.create(
+            season=self.season, name="Semi-final", stage_type=StageType.KNOCK_OUT
+        )
+        StageMapping.objects.create(provider=SportsProvider.FIFA, external_id="289290", stage=self.semifinal_stage)
+        # Deliberately no StageMapping for the Final (289292) - it shouldn't
+        # matter, since that match is filtered out for having no Away team
+        # before stage lookup is even attempted.
+
+        for external_id, name in [("43942", "England"), ("43922", "Argentina"), ("43969", "Spain")]:
+            team = Team.objects.create(name=name)
+            TeamMapping.objects.create(provider=SportsProvider.FIFA, external_id=external_id, team=team)
+
+    async def test_undecided_final_is_skipped_but_decided_semifinal_is_ingested(self):
+        page = load_fixture("matches_scheduled.json")
+        parsed = TypeAdapter(IApiMultipleResultsPaged[FifaCompetitionMatch]).validate_python(page)
+        fake_client = FakeFifaClient(matches=parsed.results)
+
+        with patch("sports.services.ingestion.FifaClient", return_value=fake_client):
+            await ingest_upcoming_matches()
+
+        self.assertEqual(await Match.objects.acount(), 1)
+        self.assertFalse(await MatchMapping.objects.filter(external_id="400021543").aexists())
+
+        semifinal_mapping = await MatchMapping.objects.select_related("match").aget(external_id="400021540")
+        semifinal = semifinal_mapping.match
+        self.assertEqual(semifinal.status, MatchStatus.SCHEDULED)
+        self.assertIsNone(semifinal.home_score)
+        self.assertIsNone(semifinal.away_score)
+        self.assertIsNone(semifinal.outcome)
