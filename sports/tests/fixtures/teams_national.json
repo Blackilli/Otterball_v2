@@ -1,0 +1,226 @@
+{
+  "ContinuationToken": null,
+  "ContinuationHash": null,
+  "Results": [
+    {
+      "IdTeam": "43835",
+      "IdConfederation": "AFC",
+      "ActiveStatus": 0,
+      "Type": 1,
+      "AgeType": 7,
+      "FootballType": 0,
+      "Gender": 1,
+      "Name": [
+        {
+          "Locale": "en-GB",
+          "Description": "Saudi Arabia"
+        }
+      ],
+      "IdAssociation": "KSA",
+      "IdCity": null,
+      "Headquarters": null,
+      "TrainingCentre": null,
+      "OfficialSite": null,
+      "City": "RIYADH",
+      "IdCountry": "KSA",
+      "PostalCode": "11432",
+      "RegionName": null,
+      "ShortClubName": "Saudi Arabia",
+      "Abbreviation": "KSA",
+      "Street": "Saudi Arabian Football Federation, Al Mather Quarter, Prince Faisal Bin Fahad Street",
+      "FoundationYear": 1956,
+      "Stadium": null,
+      "PictureUrl": "https://api.fifa.com/api/v3/picture/flags-{format}-{size}/KSA",
+      "ThumbnailUrl": null,
+      "DisplayName": [
+        {
+          "Locale": "en-GB",
+          "Description": "KSA"
+        }
+      ],
+      "Content": [],
+      "Properties": {
+        "IdIFES": "43835",
+        "StatsPerformIfesId": "43835",
+        "IdStatsPerform": "9l4imoomrnyceg5u3kdxf5l5r"
+      },
+      "IsUpdateable": null
+    },
+    {
+      "IdTeam": "43902",
+      "IdConfederation": "CONCACAF",
+      "ActiveStatus": 0,
+      "Type": 1,
+      "AgeType": 7,
+      "FootballType": 0,
+      "Gender": 1,
+      "Name": [
+        {
+          "Locale": "en-GB",
+          "Description": "Cuba"
+        }
+      ],
+      "IdAssociation": "CUB",
+      "IdCity": null,
+      "Headquarters": null,
+      "TrainingCentre": null,
+      "OfficialSite": null,
+      "City": "",
+      "IdCountry": "CUB",
+      "PostalCode": "",
+      "RegionName": null,
+      "ShortClubName": "Cuba",
+      "Abbreviation": "CUB",
+      "Street": "",
+      "FoundationYear": 1924,
+      "Stadium": null,
+      "PictureUrl": "https://api.fifa.com/api/v3/picture/flags-{format}-{size}/CUB",
+      "ThumbnailUrl": null,
+      "DisplayName": [
+        {
+          "Locale": "en-GB",
+          "Description": "CUB"
+        }
+      ],
+      "Content": [],
+      "Properties": {
+        "IdIFES": "43902",
+        "StatsPerformIfesId": "43902",
+        "IdStatsPerform": "m49kr6rapkqh6zbqdm01w3sj"
+      },
+      "IsUpdateable": null
+    },
+    {
+      "IdTeam": "43971",
+      "IdConfederation": "UEFA",
+      "ActiveStatus": 0,
+      "Type": 1,
+      "AgeType": 7,
+      "FootballType": 0,
+      "Gender": 1,
+      "Name": [
+        {
+          "Locale": "en-GB",
+          "Description": "Switzerland"
+        }
+      ],
+      "IdAssociation": "SUI",
+      "IdCity": null,
+      "Headquarters": null,
+      "TrainingCentre": null,
+      "OfficialSite": null,
+      "City": "BERN",
+      "IdCountry": "SUI",
+      "PostalCode": "3000",
+      "RegionName": null,
+      "ShortClubName": "Switzerland",
+      "Abbreviation": "SUI",
+      "Street": "Schweizerischer Fussballverband, Worbstrasse 48",
+      "FoundationYear": 1895,
+      "Stadium": null,
+      "PictureUrl": "https://api.fifa.com/api/v3/picture/flags-{format}-{size}/SUI",
+      "ThumbnailUrl": null,
+      "DisplayName": [
+        {
+          "Locale": "en-GB",
+          "Description": "SUI"
+        }
+      ],
+      "Content": [],
+      "Properties": {
+        "IdIFES": "43971",
+        "StatsPerformIfesId": "43971",
+        "IdStatsPerform": "339wxbt07ltnva7hop6m5o477"
+      },
+      "IsUpdateable": null
+    },
+    {
+      "IdTeam": "43859",
+      "IdConfederation": "CAF",
+      "ActiveStatus": null,
+      "Type": 1,
+      "AgeType": 7,
+      "FootballType": 0,
+      "Gender": 1,
+      "Name": [
+        {
+          "Locale": "en-GB",
+          "Description": "The Gambia"
+        }
+      ],
+      "IdAssociation": "GAM",
+      "IdCity": null,
+      "Headquarters": null,
+      "TrainingCentre": null,
+      "OfficialSite": null,
+      "City": "Bakau",
+      "IdCountry": "GAM",
+      "PostalCode": null,
+      "RegionName": null,
+      "ShortClubName": "Gambia",
+      "Abbreviation": "GAM",
+      "Street": null,
+      "FoundationYear": 1952,
+      "Stadium": null,
+      "PictureUrl": "https://api.fifa.com/api/v3/picture/flags-{format}-{size}/GAM",
+      "ThumbnailUrl": null,
+      "DisplayName": [
+        {
+          "Locale": "en-gb",
+          "Description": "GAM"
+        }
+      ],
+      "Content": [],
+      "Properties": {
+        "IdIFES": "43859",
+        "StatsPerformIfesId": "43859",
+        "IdStatsPerform": "6w9lenap2haqufnz7ptcr3x2t"
+      },
+      "IsUpdateable": null
+    },
+    {
+      "IdTeam": "43872",
+      "IdConfederation": "CAF",
+      "ActiveStatus": 0,
+      "Type": 1,
+      "AgeType": 7,
+      "FootballType": 0,
+      "Gender": 1,
+      "Name": [
+        {
+          "Locale": "en-GB",
+          "Description": "Morocco"
+        }
+      ],
+      "IdAssociation": "MAR",
+      "IdCity": null,
+      "Headquarters": null,
+      "TrainingCentre": null,
+      "OfficialSite": null,
+      "City": "",
+      "IdCountry": "MAR",
+      "PostalCode": "",
+      "RegionName": null,
+      "ShortClubName": "Morocco",
+      "Abbreviation": "MAR",
+      "Street": "",
+      "FoundationYear": 1955,
+      "Stadium": null,
+      "PictureUrl": "https://api.fifa.com/api/v3/picture/flags-{format}-{size}/MAR",
+      "ThumbnailUrl": null,
+      "DisplayName": [
+        {
+          "Locale": "en-GB",
+          "Description": "MAR"
+        }
+      ],
+      "Content": [],
+      "Properties": {
+        "IdIFES": "43872",
+        "StatsPerformIfesId": "43872",
+        "IdStatsPerform": "avggs3u2b5cu8i1dnzknhth52"
+      },
+      "IsUpdateable": null
+    }
+  ]
+}

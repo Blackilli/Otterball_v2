@@ -1,0 +1,914 @@
+{
+  "ContinuationToken": null,
+  "ContinuationHash": null,
+  "Results": [
+    {
+      "IdCompetition": "17",
+      "IdSeason": "285023",
+      "IdStage": "289273",
+      "IdGroup": "289275",
+      "Weather": {
+        "Humidity": null,
+        "Temperature": null,
+        "WindSpeed": null,
+        "Type": null,
+        "TypeLocalized": []
+      },
+      "Attendance": "80824",
+      "IdMatch": "400021443",
+      "MatchDay": null,
+      "StageName": [
+        {
+          "Locale": "en-GB",
+          "Description": "First Stage"
+        }
+      ],
+      "GroupName": [
+        {
+          "Locale": "en-GB",
+          "Description": "Group A"
+        }
+      ],
+      "CompetitionName": [
+        {
+          "Locale": "en-GB",
+          "Description": "FIFA World Cup™"
+        }
+      ],
+      "SeasonName": [
+        {
+          "Locale": "en-GB",
+          "Description": "FIFA World Cup 2026™"
+        }
+      ],
+      "SeasonShortName": [],
+      "Date": "2026-06-11T19:00:00Z",
+      "LocalDate": "2026-06-11T13:00:00Z",
+      "Home": {
+        "Score": 2,
+        "Side": null,
+        "IdTeam": "43911",
+        "PictureUrl": "https://api.fifa.com/api/v3/picture/flags-{format}-{size}/MEX",
+        "IdCountry": "MEX",
+        "Tactics": "4-1-2-3",
+        "TeamType": 1,
+        "AgeType": 7,
+        "TeamName": [
+          {
+            "Locale": "en-GB",
+            "Description": "Mexico"
+          }
+        ],
+        "Abbreviation": "MEX",
+        "ShortClubName": "Mexico",
+        "FootballType": 0,
+        "Gender": 1,
+        "IdAssociation": "MEX"
+      },
+      "Away": {
+        "Score": 0,
+        "Side": null,
+        "IdTeam": "43883",
+        "PictureUrl": "https://api.fifa.com/api/v3/picture/flags-{format}-{size}/RSA",
+        "IdCountry": "RSA",
+        "Tactics": "5-3-2",
+        "TeamType": 1,
+        "AgeType": 7,
+        "TeamName": [
+          {
+            "Locale": "en-GB",
+            "Description": "South Africa"
+          }
+        ],
+        "Abbreviation": "RSA",
+        "ShortClubName": "South Africa",
+        "FootballType": 0,
+        "Gender": 1,
+        "IdAssociation": "RSA"
+      },
+      "HomeTeamScore": 2,
+      "AwayTeamScore": 0,
+      "AggregateHomeTeamScore": null,
+      "AggregateAwayTeamScore": null,
+      "HomeTeamPenaltyScore": null,
+      "AwayTeamPenaltyScore": null,
+      "LastPeriodUpdate": null,
+      "Leg": null,
+      "IsHomeMatch": null,
+      "Stadium": {
+        "IdStadium": "400222084",
+        "Name": [
+          {
+            "Locale": "en-GB",
+            "Description": "Mexico City Stadium"
+          }
+        ],
+        "Capacity": null,
+        "WebAddress": null,
+        "Built": null,
+        "Roof": false,
+        "Turf": null,
+        "IdCity": "400222094",
+        "CityName": [
+          {
+            "Locale": "en-GB",
+            "Description": "Mexico City"
+          }
+        ],
+        "IdCountry": "MEX",
+        "PostalCode": null,
+        "Street": null,
+        "Email": null,
+        "Fax": null,
+        "Phone": null,
+        "AffiliationCountry": null,
+        "AffiliationRegion": null,
+        "Latitude": null,
+        "Longitude": null,
+        "Length": null,
+        "Width": null,
+        "Properties": {
+          "IdIFES": "5000118"
+        },
+        "IsUpdateable": null
+      },
+      "IsTicketSalesAllowed": null,
+      "MatchTime": "98'",
+      "SecondHalfTime": null,
+      "FirstHalfTime": null,
+      "FirstHalfExtraTime": null,
+      "SecondHalfExtraTime": null,
+      "Winner": "43911",
+      "MatchReportUrl": null,
+      "PlaceHolderA": "A1",
+      "PlaceHolderB": "A2",
+      "BallPossession": null,
+      "Officials": [
+        {
+          "IdCountry": "BRA",
+          "OfficialId": "361561",
+          "NameShort": [
+            {
+              "Locale": "en-GB",
+              "Description": "Wilton SAMPAIO"
+            }
+          ],
+          "Name": [
+            {
+              "Locale": "en-GB",
+              "Description": "Wilton SAMPAIO"
+            }
+          ],
+          "OfficialType": 1,
+          "TypeLocalized": [
+            {
+              "Locale": "en-GB",
+              "Description": "Referee"
+            }
+          ]
+        },
+        {
+          "IdCountry": "PAR",
+          "OfficialId": "416159",
+          "NameShort": [
+            {
+              "Locale": "en-GB",
+              "Description": "Juan Gabriel BENITEZ"
+            }
+          ],
+          "Name": [
+            {
+              "Locale": "en-GB",
+              "Description": "Juan Gabriel Benítez"
+            }
+          ],
+          "OfficialType": 4,
+          "TypeLocalized": [
+            {
+              "Locale": "en-GB",
+              "Description": "Fourth official"
+            }
+          ]
+        }
+      ],
+      "MatchStatus": 0,
+      "ResultType": 1,
+      "MatchNumber": 1,
+      "TimeDefined": true,
+      "OfficialityStatus": 1,
+      "MatchLegInfo": null,
+      "Properties": {
+        "IdIFES": "151600"
+      },
+      "IsUpdateable": null
+    },
+    {
+      "IdCompetition": "17",
+      "IdSeason": "285023",
+      "IdStage": "289273",
+      "IdGroup": "289275",
+      "Weather": {
+        "Humidity": null,
+        "Temperature": null,
+        "WindSpeed": null,
+        "Type": null,
+        "TypeLocalized": []
+      },
+      "Attendance": "44985",
+      "IdMatch": "400021441",
+      "MatchDay": null,
+      "StageName": [
+        {
+          "Locale": "en-GB",
+          "Description": "First Stage"
+        }
+      ],
+      "GroupName": [
+        {
+          "Locale": "en-GB",
+          "Description": "Group A"
+        }
+      ],
+      "CompetitionName": [
+        {
+          "Locale": "en-GB",
+          "Description": "FIFA World Cup™"
+        }
+      ],
+      "SeasonName": [
+        {
+          "Locale": "en-GB",
+          "Description": "FIFA World Cup 2026™"
+        }
+      ],
+      "SeasonShortName": [],
+      "Date": "2026-06-12T02:00:00Z",
+      "LocalDate": "2026-06-11T20:00:00Z",
+      "Home": {
+        "Score": 2,
+        "Side": null,
+        "IdTeam": "43822",
+        "PictureUrl": "https://api.fifa.com/api/v3/picture/flags-{format}-{size}/KOR",
+        "IdCountry": "KOR",
+        "Tactics": "3-4-3",
+        "TeamType": 1,
+        "AgeType": 7,
+        "TeamName": [
+          {
+            "Locale": "en-GB",
+            "Description": "Korea Republic"
+          }
+        ],
+        "Abbreviation": "KOR",
+        "ShortClubName": "Korea Republic",
+        "FootballType": 0,
+        "Gender": 1,
+        "IdAssociation": "KOR"
+      },
+      "Away": {
+        "Score": 1,
+        "Side": null,
+        "IdTeam": "43995",
+        "PictureUrl": "https://api.fifa.com/api/v3/picture/flags-{format}-{size}/CZE",
+        "IdCountry": "CZE",
+        "Tactics": "5-2-3",
+        "TeamType": 1,
+        "AgeType": 7,
+        "TeamName": [
+          {
+            "Locale": "en-GB",
+            "Description": "Czechia"
+          }
+        ],
+        "Abbreviation": "CZE",
+        "ShortClubName": "Czechia",
+        "FootballType": 0,
+        "Gender": 1,
+        "IdAssociation": "CZE"
+      },
+      "HomeTeamScore": 2,
+      "AwayTeamScore": 1,
+      "AggregateHomeTeamScore": null,
+      "AggregateAwayTeamScore": null,
+      "HomeTeamPenaltyScore": null,
+      "AwayTeamPenaltyScore": null,
+      "LastPeriodUpdate": null,
+      "Leg": null,
+      "IsHomeMatch": null,
+      "Stadium": {
+        "IdStadium": "400252150",
+        "Name": [
+          {
+            "Locale": "en-GB",
+            "Description": "Guadalajara Stadium"
+          }
+        ],
+        "Capacity": null,
+        "WebAddress": null,
+        "Built": null,
+        "Roof": false,
+        "Turf": null,
+        "IdCity": "400222091",
+        "CityName": [
+          {
+            "Locale": "en-GB",
+            "Description": "Guadalajara"
+          }
+        ],
+        "IdCountry": "MEX",
+        "PostalCode": null,
+        "Street": null,
+        "Email": null,
+        "Fax": null,
+        "Phone": null,
+        "AffiliationCountry": null,
+        "AffiliationRegion": null,
+        "Latitude": null,
+        "Longitude": null,
+        "Length": null,
+        "Width": null,
+        "Properties": {
+          "IdIFES": "5023690"
+        },
+        "IsUpdateable": null
+      },
+      "IsTicketSalesAllowed": null,
+      "MatchTime": "97'",
+      "SecondHalfTime": null,
+      "FirstHalfTime": null,
+      "FirstHalfExtraTime": null,
+      "SecondHalfExtraTime": null,
+      "Winner": "43822",
+      "MatchReportUrl": null,
+      "PlaceHolderA": "A3",
+      "PlaceHolderB": "A4",
+      "BallPossession": null,
+      "Officials": [
+        {
+          "IdCountry": "EGY",
+          "OfficialId": "392013",
+          "NameShort": [
+            {
+              "Locale": "en-GB",
+              "Description": "Amin MOHAMED"
+            }
+          ],
+          "Name": [
+            {
+              "Locale": "en-GB",
+              "Description": "Amin Mohamed Omar"
+            }
+          ],
+          "OfficialType": 1,
+          "TypeLocalized": [
+            {
+              "Locale": "en-GB",
+              "Description": "Referee"
+            }
+          ]
+        }
+      ],
+      "MatchStatus": 0,
+      "ResultType": 1,
+      "MatchNumber": 2,
+      "TimeDefined": true,
+      "OfficialityStatus": 1,
+      "MatchLegInfo": null,
+      "Properties": {
+        "IdIFES": "151608"
+      },
+      "IsUpdateable": null
+    },
+    {
+      "IdCompetition": "17",
+      "IdSeason": "285023",
+      "IdStage": "289273",
+      "IdGroup": "289276",
+      "Weather": {
+        "Humidity": null,
+        "Temperature": null,
+        "WindSpeed": null,
+        "Type": null,
+        "TypeLocalized": []
+      },
+      "Attendance": "43002",
+      "IdMatch": "400021449",
+      "MatchDay": null,
+      "StageName": [
+        {
+          "Locale": "en-GB",
+          "Description": "First Stage"
+        }
+      ],
+      "GroupName": [
+        {
+          "Locale": "en-GB",
+          "Description": "Group B"
+        }
+      ],
+      "CompetitionName": [
+        {
+          "Locale": "en-GB",
+          "Description": "FIFA World Cup™"
+        }
+      ],
+      "SeasonName": [
+        {
+          "Locale": "en-GB",
+          "Description": "FIFA World Cup 2026™"
+        }
+      ],
+      "SeasonShortName": [],
+      "Date": "2026-06-12T19:00:00Z",
+      "LocalDate": "2026-06-12T15:00:00Z",
+      "Home": {
+        "Score": 1,
+        "Side": null,
+        "IdTeam": "43899",
+        "PictureUrl": "https://api.fifa.com/api/v3/picture/flags-{format}-{size}/CAN",
+        "IdCountry": "CAN",
+        "Tactics": "4-4-2",
+        "TeamType": 1,
+        "AgeType": 7,
+        "TeamName": [
+          {
+            "Locale": "en-GB",
+            "Description": "Canada"
+          }
+        ],
+        "Abbreviation": "CAN",
+        "ShortClubName": "Canada",
+        "FootballType": 0,
+        "Gender": 1,
+        "IdAssociation": "CAN"
+      },
+      "Away": {
+        "Score": 1,
+        "Side": null,
+        "IdTeam": "44037",
+        "PictureUrl": "https://api.fifa.com/api/v3/picture/flags-{format}-{size}/BIH",
+        "IdCountry": "BIH",
+        "Tactics": "4-4-2",
+        "TeamType": 1,
+        "AgeType": 7,
+        "TeamName": [
+          {
+            "Locale": "en-GB",
+            "Description": "Bosnia and Herzegovina"
+          }
+        ],
+        "Abbreviation": "BIH",
+        "ShortClubName": "Bosnia and Herzegovina",
+        "FootballType": 0,
+        "Gender": 1,
+        "IdAssociation": "BIH"
+      },
+      "HomeTeamScore": 1,
+      "AwayTeamScore": 1,
+      "AggregateHomeTeamScore": null,
+      "AggregateAwayTeamScore": null,
+      "HomeTeamPenaltyScore": null,
+      "AwayTeamPenaltyScore": null,
+      "LastPeriodUpdate": null,
+      "Leg": null,
+      "IsHomeMatch": null,
+      "Stadium": {
+        "IdStadium": "400242032",
+        "Name": [
+          {
+            "Locale": "en-GB",
+            "Description": "Toronto Stadium"
+          }
+        ],
+        "Capacity": null,
+        "WebAddress": null,
+        "Built": null,
+        "Roof": false,
+        "Turf": null,
+        "IdCity": "400242043",
+        "CityName": [
+          {
+            "Locale": "en-GB",
+            "Description": "Toronto"
+          }
+        ],
+        "IdCountry": "CAN",
+        "PostalCode": null,
+        "Street": null,
+        "Email": null,
+        "Fax": null,
+        "Phone": null,
+        "AffiliationCountry": null,
+        "AffiliationRegion": null,
+        "Latitude": null,
+        "Longitude": null,
+        "Length": null,
+        "Width": null,
+        "Properties": {
+          "IdIFES": "5016008"
+        },
+        "IsUpdateable": null
+      },
+      "IsTicketSalesAllowed": null,
+      "MatchTime": "97'",
+      "SecondHalfTime": null,
+      "FirstHalfTime": null,
+      "FirstHalfExtraTime": null,
+      "SecondHalfExtraTime": null,
+      "Winner": null,
+      "MatchReportUrl": null,
+      "PlaceHolderA": "B1",
+      "PlaceHolderB": "B2",
+      "BallPossession": null,
+      "Officials": [
+        {
+          "IdCountry": "ARG",
+          "OfficialId": "416165",
+          "NameShort": [
+            {
+              "Locale": "en-GB",
+              "Description": "Facundo TELLO"
+            }
+          ],
+          "Name": [
+            {
+              "Locale": "en-GB",
+              "Description": "Facundo TELLO"
+            }
+          ],
+          "OfficialType": 1,
+          "TypeLocalized": [
+            {
+              "Locale": "en-GB",
+              "Description": "Referee"
+            }
+          ]
+        }
+      ],
+      "MatchStatus": 0,
+      "ResultType": 1,
+      "MatchNumber": 3,
+      "TimeDefined": true,
+      "OfficialityStatus": 1,
+      "MatchLegInfo": null,
+      "Properties": {
+        "IdIFES": "151614"
+      },
+      "IsUpdateable": null
+    },
+    {
+      "IdCompetition": "17",
+      "IdSeason": "285023",
+      "IdStage": "289273",
+      "IdGroup": "289278",
+      "Weather": {
+        "Humidity": null,
+        "Temperature": null,
+        "WindSpeed": null,
+        "Type": null,
+        "TypeLocalized": []
+      },
+      "Attendance": "70492",
+      "IdMatch": "400021458",
+      "MatchDay": null,
+      "StageName": [
+        {
+          "Locale": "en-GB",
+          "Description": "First Stage"
+        }
+      ],
+      "GroupName": [
+        {
+          "Locale": "en-GB",
+          "Description": "Group D"
+        }
+      ],
+      "CompetitionName": [
+        {
+          "Locale": "en-GB",
+          "Description": "FIFA World Cup™"
+        }
+      ],
+      "SeasonName": [
+        {
+          "Locale": "en-GB",
+          "Description": "FIFA World Cup 2026™"
+        }
+      ],
+      "SeasonShortName": [],
+      "Date": "2026-06-13T01:00:00Z",
+      "LocalDate": "2026-06-12T18:00:00Z",
+      "Home": {
+        "Score": 4,
+        "Side": null,
+        "IdTeam": "43921",
+        "PictureUrl": "https://api.fifa.com/api/v3/picture/flags-{format}-{size}/USA",
+        "IdCountry": "USA",
+        "Tactics": "4-2-3-1",
+        "TeamType": 1,
+        "AgeType": 7,
+        "TeamName": [
+          {
+            "Locale": "en-GB",
+            "Description": "USA"
+          }
+        ],
+        "Abbreviation": "USA",
+        "ShortClubName": "USA",
+        "FootballType": 0,
+        "Gender": 1,
+        "IdAssociation": "USA"
+      },
+      "Away": {
+        "Score": 1,
+        "Side": null,
+        "IdTeam": "43928",
+        "PictureUrl": "https://api.fifa.com/api/v3/picture/flags-{format}-{size}/PAR",
+        "IdCountry": "PAR",
+        "Tactics": "4-4-2",
+        "TeamType": 1,
+        "AgeType": 7,
+        "TeamName": [
+          {
+            "Locale": "en-GB",
+            "Description": "Paraguay"
+          }
+        ],
+        "Abbreviation": "PAR",
+        "ShortClubName": "Paraguay",
+        "FootballType": 0,
+        "Gender": 1,
+        "IdAssociation": "PAR"
+      },
+      "HomeTeamScore": 4,
+      "AwayTeamScore": 1,
+      "AggregateHomeTeamScore": null,
+      "AggregateAwayTeamScore": null,
+      "HomeTeamPenaltyScore": null,
+      "AwayTeamPenaltyScore": null,
+      "LastPeriodUpdate": null,
+      "Leg": null,
+      "IsHomeMatch": null,
+      "Stadium": {
+        "IdStadium": "400017978",
+        "Name": [
+          {
+            "Locale": "en-GB",
+            "Description": "Los Angeles Stadium"
+          }
+        ],
+        "Capacity": null,
+        "WebAddress": null,
+        "Built": null,
+        "Roof": false,
+        "Turf": null,
+        "IdCity": "400021920",
+        "CityName": [
+          {
+            "Locale": "en-GB",
+            "Description": "Los Angeles"
+          }
+        ],
+        "IdCountry": "USA",
+        "PostalCode": null,
+        "Street": null,
+        "Email": null,
+        "Fax": null,
+        "Phone": null,
+        "AffiliationCountry": null,
+        "AffiliationRegion": null,
+        "Latitude": null,
+        "Longitude": null,
+        "Length": null,
+        "Width": null,
+        "Properties": {
+          "IdIFES": "5048026"
+        },
+        "IsUpdateable": null
+      },
+      "IsTicketSalesAllowed": null,
+      "MatchTime": "99'",
+      "SecondHalfTime": null,
+      "FirstHalfTime": null,
+      "FirstHalfExtraTime": null,
+      "SecondHalfExtraTime": null,
+      "Winner": "43921",
+      "MatchReportUrl": null,
+      "PlaceHolderA": "D1",
+      "PlaceHolderB": "D2",
+      "BallPossession": null,
+      "Officials": [
+        {
+          "IdCountry": "NED",
+          "OfficialId": "327159",
+          "NameShort": [
+            {
+              "Locale": "en-GB",
+              "Description": "Danny MAKKELIE"
+            }
+          ],
+          "Name": [
+            {
+              "Locale": "en-GB",
+              "Description": "Danny Desmond Makkelie"
+            }
+          ],
+          "OfficialType": 1,
+          "TypeLocalized": [
+            {
+              "Locale": "en-GB",
+              "Description": "Referee"
+            }
+          ]
+        }
+      ],
+      "MatchStatus": 0,
+      "ResultType": 1,
+      "MatchNumber": 4,
+      "TimeDefined": true,
+      "OfficialityStatus": 1,
+      "MatchLegInfo": null,
+      "Properties": {
+        "IdIFES": "151625"
+      },
+      "IsUpdateable": null
+    },
+    {
+      "IdCompetition": "17",
+      "IdSeason": "285023",
+      "IdStage": "289273",
+      "IdGroup": "289276",
+      "Weather": {
+        "Humidity": null,
+        "Temperature": null,
+        "WindSpeed": null,
+        "Type": null,
+        "TypeLocalized": []
+      },
+      "Attendance": "67966",
+      "IdMatch": "400021447",
+      "MatchDay": null,
+      "StageName": [
+        {
+          "Locale": "en-GB",
+          "Description": "First Stage"
+        }
+      ],
+      "GroupName": [
+        {
+          "Locale": "en-GB",
+          "Description": "Group B"
+        }
+      ],
+      "CompetitionName": [
+        {
+          "Locale": "en-GB",
+          "Description": "FIFA World Cup™"
+        }
+      ],
+      "SeasonName": [
+        {
+          "Locale": "en-GB",
+          "Description": "FIFA World Cup 2026™"
+        }
+      ],
+      "SeasonShortName": [],
+      "Date": "2026-06-13T19:00:00Z",
+      "LocalDate": "2026-06-13T12:00:00Z",
+      "Home": {
+        "Score": 1,
+        "Side": null,
+        "IdTeam": "43834",
+        "PictureUrl": "https://api.fifa.com/api/v3/picture/flags-{format}-{size}/QAT",
+        "IdCountry": "QAT",
+        "Tactics": "4-2-3-1",
+        "TeamType": 1,
+        "AgeType": 7,
+        "TeamName": [
+          {
+            "Locale": "en-GB",
+            "Description": "Qatar"
+          }
+        ],
+        "Abbreviation": "QAT",
+        "ShortClubName": "Qatar",
+        "FootballType": 0,
+        "Gender": 1,
+        "IdAssociation": "QAT"
+      },
+      "Away": {
+        "Score": 1,
+        "Side": null,
+        "IdTeam": "43971",
+        "PictureUrl": "https://api.fifa.com/api/v3/picture/flags-{format}-{size}/SUI",
+        "IdCountry": "SUI",
+        "Tactics": "4-3-3",
+        "TeamType": 1,
+        "AgeType": 7,
+        "TeamName": [
+          {
+            "Locale": "en-GB",
+            "Description": "Switzerland"
+          }
+        ],
+        "Abbreviation": "SUI",
+        "ShortClubName": "Switzerland",
+        "FootballType": 0,
+        "Gender": 1,
+        "IdAssociation": "SUI"
+      },
+      "HomeTeamScore": 1,
+      "AwayTeamScore": 1,
+      "AggregateHomeTeamScore": null,
+      "AggregateAwayTeamScore": null,
+      "HomeTeamPenaltyScore": null,
+      "AwayTeamPenaltyScore": null,
+      "LastPeriodUpdate": null,
+      "Leg": null,
+      "IsHomeMatch": null,
+      "Stadium": {
+        "IdStadium": "400257521",
+        "Name": [
+          {
+            "Locale": "en-GB",
+            "Description": "San Francisco Bay Area Stadium"
+          }
+        ],
+        "Capacity": null,
+        "WebAddress": null,
+        "Built": null,
+        "Roof": false,
+        "Turf": null,
+        "IdCity": "400019416",
+        "CityName": [
+          {
+            "Locale": "en-GB",
+            "Description": "San Francisco Bay Area"
+          }
+        ],
+        "IdCountry": "USA",
+        "PostalCode": null,
+        "Street": null,
+        "Email": null,
+        "Fax": null,
+        "Phone": null,
+        "AffiliationCountry": null,
+        "AffiliationRegion": null,
+        "Latitude": null,
+        "Longitude": null,
+        "Length": null,
+        "Width": null,
+        "Properties": {
+          "IdIFES": "5030398"
+        },
+        "IsUpdateable": null
+      },
+      "IsTicketSalesAllowed": null,
+      "MatchTime": "98'",
+      "SecondHalfTime": null,
+      "FirstHalfTime": null,
+      "FirstHalfExtraTime": null,
+      "SecondHalfExtraTime": null,
+      "Winner": null,
+      "MatchReportUrl": null,
+      "PlaceHolderA": "B3",
+      "PlaceHolderB": "B4",
+      "BallPossession": null,
+      "Officials": [
+        {
+          "IdCountry": "HON",
+          "OfficialId": "400191",
+          "NameShort": [
+            {
+              "Locale": "en-GB",
+              "Description": "Said MARTINEZ"
+            }
+          ],
+          "Name": [
+            {
+              "Locale": "en-GB",
+              "Description": "Said MARTINEZ"
+            }
+          ],
+          "OfficialType": 1,
+          "TypeLocalized": [
+            {
+              "Locale": "en-GB",
+              "Description": "Referee"
+            }
+          ]
+        }
+      ],
+      "MatchStatus": 0,
+      "ResultType": 1,
+      "MatchNumber": 8,
+      "TimeDefined": true,
+      "OfficialityStatus": 1,
+      "MatchLegInfo": null,
+      "Properties": {
+        "IdIFES": "151613"
+      },
+      "IsUpdateable": null
+    }
+  ]
+}

@@ -1,0 +1,705 @@
+{
+  "IdMatch": "400021541",
+  "IdStage": "289290",
+  "IdGroup": null,
+  "IdSeason": "285023",
+  "CoverageLevel": null,
+  "IdCompetition": "17",
+  "CompetitionName": [
+    {
+      "Locale": "en-GB",
+      "Description": "FIFA World Cup™"
+    }
+  ],
+  "SeasonName": [
+    {
+      "Locale": "en-GB",
+      "Description": "FIFA World Cup 2026™"
+    }
+  ],
+  "SeasonShortName": [],
+  "Stadium": {
+    "IdStadium": "400257526",
+    "Name": [
+      {
+        "Locale": "en-GB",
+        "Description": "Dallas Stadium"
+      }
+    ],
+    "Capacity": null,
+    "WebAddress": null,
+    "Built": null,
+    "Roof": false,
+    "Turf": null,
+    "IdCity": "400221951",
+    "CityName": [
+      {
+        "Locale": "en-GB",
+        "Description": "Dallas"
+      }
+    ],
+    "IdCountry": "USA",
+    "PostalCode": null,
+    "Street": null,
+    "Email": null,
+    "Fax": null,
+    "Phone": null,
+    "AffiliationCountry": null,
+    "AffiliationRegion": null,
+    "Latitude": null,
+    "Longitude": null,
+    "Length": null,
+    "Width": null,
+    "Properties": {
+      "IdIFES": "5020989"
+    },
+    "IsUpdateable": null
+  },
+  "ResultType": 1,
+  "MatchDay": null,
+  "MatchNumber": 101,
+  "HomeTeamPenaltyScore": null,
+  "AwayTeamPenaltyScore": null,
+  "AggregateHomeTeamScore": null,
+  "AggregateAwayTeamScore": null,
+  "Weather": {
+    "Humidity": null,
+    "Temperature": null,
+    "WindSpeed": null,
+    "Type": null,
+    "TypeLocalized": []
+  },
+  "Attendance": "70176",
+  "Date": "2026-07-14T19:00:00Z",
+  "LocalDate": "2026-07-14T14:00:00Z",
+  "MatchTime": "98'",
+  "SecondHalfTime": null,
+  "FirstHalfTime": null,
+  "FirstHalfExtraTime": null,
+  "SecondHalfExtraTime": null,
+  "Winner": "43969",
+  "Period": 10,
+  "HomeTeam": {
+    "Score": 0,
+    "Side": null,
+    "IdTeam": "43946",
+    "PictureUrl": "https://api.fifa.com/api/v3/picture/flags-{format}-{size}/FRA",
+    "IdCountry": "FRA",
+    "TeamType": 1,
+    "AgeType": 7,
+    "Tactics": "4-2-3-1",
+    "TeamName": [
+      {
+        "Locale": "en-GB",
+        "Description": "France"
+      }
+    ],
+    "Abbreviation": "FRA",
+    "Coaches": [
+      {
+        "IdCoach": "48455",
+        "IdCountry": "FRA",
+        "PictureUrl": "https://digitalhub.fifa.com/transform/38ce0161-6896-4b2a-ac42-700d51e5acac/DESCHAMPS-Didier_48455",
+        "Name": [
+          {
+            "Locale": "en-GB",
+            "Description": "Didier Deschamps"
+          }
+        ],
+        "Alias": [
+          {
+            "Locale": "en-GB",
+            "Description": "Didier DESCHAMPS"
+          }
+        ],
+        "Role": 0,
+        "SpecialStatus": null
+      }
+    ],
+    "Players": [
+      {
+        "IdPlayer": "448332",
+        "IdTeam": "43946",
+        "ShirtNumber": 16,
+        "Status": 1,
+        "SpecialStatus": null,
+        "Captain": false,
+        "PlayerName": [
+          {
+            "Locale": "en-GB",
+            "Description": "Mike MAIGNAN"
+          }
+        ],
+        "ShortName": [
+          {
+            "Locale": "en-GB",
+            "Description": "Mike MAIGNAN"
+          }
+        ],
+        "Position": 0,
+        "PlayerPicture": {
+          "Id": "3F92A933-A22D-4F58-8F4FB51370AEACF4",
+          "PictureUrl": "https://digitalhub.fifa.com/transform/3f92a933-a22d-4f58-8f4f-b51370aeacf4/MAIGNAN-Mike_448332"
+        },
+        "FieldStatus": 0,
+        "LineupX": null,
+        "LineupY": null
+      },
+      {
+        "IdPlayer": "368860",
+        "IdTeam": "43946",
+        "ShirtNumber": 3,
+        "Status": 1,
+        "SpecialStatus": null,
+        "Captain": false,
+        "PlayerName": [
+          {
+            "Locale": "en-GB",
+            "Description": "Lucas Digne"
+          }
+        ],
+        "ShortName": [
+          {
+            "Locale": "en-GB",
+            "Description": "Lucas DIGNE"
+          }
+        ],
+        "Position": 1,
+        "PlayerPicture": {
+          "Id": "70E09388-6736-4F6C-85CF0AA2017A6B18",
+          "PictureUrl": "https://digitalhub.fifa.com/transform/70e09388-6736-4f6c-85cf-0aa2017a6b18/DIGNE-Lucas_368860"
+        },
+        "FieldStatus": 0,
+        "LineupX": null,
+        "LineupY": null
+      },
+      {
+        "IdPlayer": "389876",
+        "IdTeam": "43946",
+        "ShirtNumber": 4,
+        "Status": 1,
+        "SpecialStatus": null,
+        "Captain": false,
+        "PlayerName": [
+          {
+            "Locale": "en-GB",
+            "Description": "Dayot UPAMECANO"
+          }
+        ],
+        "ShortName": [
+          {
+            "Locale": "en-GB",
+            "Description": "Dayot UPAMECANO"
+          }
+        ],
+        "Position": 1,
+        "PlayerPicture": {
+          "Id": "DAAE69AE-72E0-4E42-812FD19D74D12478",
+          "PictureUrl": "https://digitalhub.fifa.com/transform/daae69ae-72e0-4e42-812f-d19d74d12478/UPAMECANO-Dayot_389876"
+        },
+        "FieldStatus": 0,
+        "LineupX": null,
+        "LineupY": null
+      }
+    ],
+    "Bookings": [
+      {
+        "Card": 1,
+        "Period": 3,
+        "IdEvent": null,
+        "EventNumber": null,
+        "IdPlayer": "402047",
+        "IdCoach": null,
+        "IdStaff": null,
+        "IdTeam": "43946",
+        "Minute": "8'",
+        "Reason": null
+      },
+      {
+        "Card": 1,
+        "Period": 5,
+        "IdEvent": null,
+        "EventNumber": null,
+        "IdPlayer": "389867",
+        "IdCoach": null,
+        "IdStaff": null,
+        "IdTeam": "43946",
+        "Minute": "86'",
+        "Reason": null
+      }
+    ],
+    "Goals": [],
+    "Substitutions": [
+      {
+        "IdEvent": null,
+        "Period": 3,
+        "Reason": 0,
+        "SubstitutePosition": 1,
+        "IdPlayerOff": "419177",
+        "IdPlayerOn": "405881",
+        "PlayerOffName": [
+          {
+            "Locale": "en-GB",
+            "Description": "William SALIBA"
+          }
+        ],
+        "PlayerOnName": [
+          {
+            "Locale": "en-GB",
+            "Description": "Maxence Lacroix"
+          }
+        ],
+        "Minute": "30'",
+        "IdTeam": "43946"
+      },
+      {
+        "IdEvent": null,
+        "Period": 4,
+        "Reason": 0,
+        "SubstitutePosition": 2,
+        "IdPlayerOff": "402047",
+        "IdPlayerOn": "485677",
+        "PlayerOffName": [
+          {
+            "Locale": "en-GB",
+            "Description": "Adrien RABIOT"
+          }
+        ],
+        "PlayerOnName": [
+          {
+            "Locale": "en-GB",
+            "Description": "Manu KONE"
+          }
+        ],
+        "Minute": "",
+        "IdTeam": "43946"
+      },
+      {
+        "IdEvent": null,
+        "Period": 5,
+        "Reason": 0,
+        "SubstitutePosition": 3,
+        "IdPlayerOff": "484860",
+        "IdPlayerOn": "464114",
+        "PlayerOffName": [
+          {
+            "Locale": "en-GB",
+            "Description": "Bradley BARCOLA"
+          }
+        ],
+        "PlayerOnName": [
+          {
+            "Locale": "en-GB",
+            "Description": "Desire DOUE"
+          }
+        ],
+        "Minute": "57'",
+        "IdTeam": "43946"
+      },
+      {
+        "IdEvent": null,
+        "Period": 5,
+        "Reason": 0,
+        "SubstitutePosition": 3,
+        "IdPlayerOff": "485655",
+        "IdPlayerOn": "431861",
+        "PlayerOffName": [
+          {
+            "Locale": "en-GB",
+            "Description": "Michael OLISE"
+          }
+        ],
+        "PlayerOnName": [
+          {
+            "Locale": "en-GB",
+            "Description": "Rayan CHERKI"
+          }
+        ],
+        "Minute": "72'",
+        "IdTeam": "43946"
+      },
+      {
+        "IdEvent": null,
+        "Period": 5,
+        "Reason": 0,
+        "SubstitutePosition": 1,
+        "IdPlayerOff": "368860",
+        "IdPlayerOn": "408042",
+        "PlayerOffName": [
+          {
+            "Locale": "en-GB",
+            "Description": "Lucas Digne"
+          }
+        ],
+        "PlayerOnName": [
+          {
+            "Locale": "en-GB",
+            "Description": "Theo HERNANDEZ"
+          }
+        ],
+        "Minute": "72'",
+        "IdTeam": "43946"
+      }
+    ],
+    "Staffs": [
+      {
+        "IdStaff": "184635",
+        "IdCountry": "FRA",
+        "Role": 2,
+        "PictureUrl": null,
+        "Name": [
+          {
+            "Locale": "en-GB",
+            "Description": "Franck RAVIOT"
+          }
+        ],
+        "Alias": [
+          {
+            "Locale": "en-GB",
+            "Description": "Franck RAVIOT"
+          }
+        ]
+      }
+    ],
+    "FootballType": 0,
+    "Gender": 1,
+    "IdAssociation": "FRA",
+    "ShortClubName": "France"
+  },
+  "AwayTeam": {
+    "Score": 2,
+    "Side": null,
+    "IdTeam": "43969",
+    "PictureUrl": "https://api.fifa.com/api/v3/picture/flags-{format}-{size}/ESP",
+    "IdCountry": "ESP",
+    "TeamType": 1,
+    "AgeType": 7,
+    "Tactics": "4-1-2-3",
+    "TeamName": [
+      {
+        "Locale": "en-GB",
+        "Description": "Spain"
+      }
+    ],
+    "Abbreviation": "ESP",
+    "Coaches": [
+      {
+        "IdCoach": "405576",
+        "IdCountry": "ESP",
+        "PictureUrl": null,
+        "Name": [
+          {
+            "Locale": "en-GB",
+            "Description": "Juanjo GONZALEZ"
+          }
+        ],
+        "Alias": [
+          {
+            "Locale": "en-GB",
+            "Description": "Juanjo GONZALEZ"
+          }
+        ],
+        "Role": 1,
+        "SpecialStatus": null
+      }
+    ],
+    "Players": [
+      {
+        "IdPlayer": "430753",
+        "IdTeam": "43969",
+        "ShirtNumber": 23,
+        "Status": 1,
+        "SpecialStatus": null,
+        "Captain": false,
+        "PlayerName": [
+          {
+            "Locale": "en-GB",
+            "Description": "Unai SIMON"
+          }
+        ],
+        "ShortName": [
+          {
+            "Locale": "en-GB",
+            "Description": "Unai SIMON"
+          }
+        ],
+        "Position": 0,
+        "PlayerPicture": {
+          "Id": "41E0F920-BD7D-4BD6-882BC83ED33E3F26",
+          "PictureUrl": "https://digitalhub.fifa.com/transform/41e0f920-bd7d-4bd6-882b-c83ed33e3f26/SIMON-Unai_430753"
+        },
+        "FieldStatus": 0,
+        "LineupX": null,
+        "LineupY": null
+      },
+      {
+        "IdPlayer": "430144",
+        "IdTeam": "43969",
+        "ShirtNumber": 12,
+        "Status": 1,
+        "SpecialStatus": null,
+        "Captain": false,
+        "PlayerName": [
+          {
+            "Locale": "en-GB",
+            "Description": "Pedro PORRO"
+          }
+        ],
+        "ShortName": [
+          {
+            "Locale": "en-GB",
+            "Description": "Pedro PORRO"
+          }
+        ],
+        "Position": 1,
+        "PlayerPicture": {
+          "Id": "2C33B0C7-C399-4EAC-98B266F35E77886A",
+          "PictureUrl": "https://digitalhub.fifa.com/transform/2c33b0c7-c399-4eac-98b2-66f35e77886a/PORRO-Pedro_430144"
+        },
+        "FieldStatus": 0,
+        "LineupX": null,
+        "LineupY": null
+      },
+      {
+        "IdPlayer": "335999",
+        "IdTeam": "43969",
+        "ShirtNumber": 14,
+        "Status": 1,
+        "SpecialStatus": null,
+        "Captain": false,
+        "PlayerName": [
+          {
+            "Locale": "en-GB",
+            "Description": "Aymeric LAPORTE"
+          }
+        ],
+        "ShortName": [
+          {
+            "Locale": "en-GB",
+            "Description": "Aymeric LAPORTE"
+          }
+        ],
+        "Position": 1,
+        "PlayerPicture": {
+          "Id": "E923CA38-381D-4187-9D409F5F72434530",
+          "PictureUrl": "https://digitalhub.fifa.com/transform/e923ca38-381d-4187-9d40-9f5f72434530/LAPORTE-Aymeric_335999"
+        },
+        "FieldStatus": 0,
+        "LineupX": null,
+        "LineupY": null
+      }
+    ],
+    "Bookings": [
+      {
+        "Card": 1,
+        "Period": 3,
+        "IdEvent": null,
+        "EventNumber": null,
+        "IdPlayer": "430735",
+        "IdCoach": null,
+        "IdStaff": null,
+        "IdTeam": "43969",
+        "Minute": "31'",
+        "Reason": null
+      }
+    ],
+    "Goals": [
+      {
+        "Type": 1,
+        "IdPlayer": "430751",
+        "Minute": "22'",
+        "IdAssistPlayer": null,
+        "Period": 3,
+        "IdGoal": null,
+        "IdTeam": "43969"
+      },
+      {
+        "Type": 2,
+        "IdPlayer": "430144",
+        "Minute": "58'",
+        "IdAssistPlayer": null,
+        "Period": 5,
+        "IdGoal": null,
+        "IdTeam": "43969"
+      }
+    ],
+    "Substitutions": [
+      {
+        "IdEvent": null,
+        "Period": 5,
+        "Reason": 0,
+        "SubstitutePosition": 3,
+        "IdPlayerOff": "430751",
+        "IdPlayerOn": "405545",
+        "PlayerOffName": [
+          {
+            "Locale": "en-GB",
+            "Description": "Mikel OYARZABAL"
+          }
+        ],
+        "PlayerOnName": [
+          {
+            "Locale": "en-GB",
+            "Description": "Ferran TORRES"
+          }
+        ],
+        "Minute": "74'",
+        "IdTeam": "43969"
+      },
+      {
+        "IdEvent": null,
+        "Period": 5,
+        "Reason": 0,
+        "SubstitutePosition": 2,
+        "IdPlayerOff": "430718",
+        "IdPlayerOn": "423646",
+        "PlayerOffName": [
+          {
+            "Locale": "en-GB",
+            "Description": "Fabian RUIZ"
+          }
+        ],
+        "PlayerOnName": [
+          {
+            "Locale": "en-GB",
+            "Description": "PEDRI"
+          }
+        ],
+        "Minute": "77'",
+        "IdTeam": "43969"
+      },
+      {
+        "IdEvent": null,
+        "Period": 5,
+        "Reason": 0,
+        "SubstitutePosition": 3,
+        "IdPlayerOff": "430750",
+        "IdPlayerOn": "430733",
+        "PlayerOffName": [
+          {
+            "Locale": "en-GB",
+            "Description": "Dani OLMO"
+          }
+        ],
+        "PlayerOnName": [
+          {
+            "Locale": "en-GB",
+            "Description": "Mikel MERINO"
+          }
+        ],
+        "Minute": "77'",
+        "IdTeam": "43969"
+      },
+      {
+        "IdEvent": null,
+        "Period": 5,
+        "Reason": 0,
+        "SubstitutePosition": 2,
+        "IdPlayerOff": "447860",
+        "IdPlayerOn": "447855",
+        "PlayerOffName": [
+          {
+            "Locale": "en-GB",
+            "Description": "Alex BAENA"
+          }
+        ],
+        "PlayerOnName": [
+          {
+            "Locale": "en-GB",
+            "Description": "Nico WILLIAMS"
+          }
+        ],
+        "Minute": "83'",
+        "IdTeam": "43969"
+      },
+      {
+        "IdEvent": null,
+        "Period": 5,
+        "Reason": 0,
+        "SubstitutePosition": 1,
+        "IdPlayerOff": "430144",
+        "IdPlayerOn": "382739",
+        "PlayerOffName": [
+          {
+            "Locale": "en-GB",
+            "Description": "Pedro PORRO"
+          }
+        ],
+        "PlayerOnName": [
+          {
+            "Locale": "en-GB",
+            "Description": "Marcos LLORENTE"
+          }
+        ],
+        "Minute": "83'",
+        "IdTeam": "43969"
+      }
+    ],
+    "Staffs": [
+      {
+        "IdStaff": "440301",
+        "IdCountry": "ESP",
+        "Role": 16,
+        "PictureUrl": null,
+        "Name": [
+          {
+            "Locale": "en-GB",
+            "Description": "Nuria MARTINEZ"
+          }
+        ],
+        "Alias": [
+          {
+            "Locale": "en-GB",
+            "Description": "Nuria MARTINEZ"
+          }
+        ]
+      }
+    ],
+    "FootballType": 0,
+    "Gender": 1,
+    "IdAssociation": "ESP",
+    "ShortClubName": "Spain"
+  },
+  "BallPossession": null,
+  "TerritorialPossesion": null,
+  "TerritorialThirdPossesion": null,
+  "Officials": [
+    {
+      "IdCountry": "SLV",
+      "OfficialId": "408378",
+      "NameShort": [
+        {
+          "Locale": "en-GB",
+          "Description": "Ivan BARTON"
+        }
+      ],
+      "Name": [
+        {
+          "Locale": "en-GB",
+          "Description": "Ivan Arcides Barton Cisneros"
+        }
+      ],
+      "OfficialType": 1,
+      "TypeLocalized": [
+        {
+          "Locale": "en-GB",
+          "Description": "Referee"
+        }
+      ]
+    }
+  ],
+  "MatchStatus": 0,
+  "GroupName": [],
+  "StageName": [
+    {
+      "Locale": "en-GB",
+      "Description": "Semi-final"
+    }
+  ],
+  "OfficialityStatus": 1,
+  "TimeDefined": true,
+  "Properties": {
+    "IdIFES": "151707"
+  },
+  "IsUpdateable": null
+}

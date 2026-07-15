@@ -1,16 +1,37 @@
 import datetime
+import json
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from django.conf import settings
 from django.test import TestCase
 from django.utils import timezone
 from PIL import Image
+from pydantic import TypeAdapter
 
+from sports.integrations.fifa import (
+    Booking,
+)
 from sports.integrations.fifa import Competition as FifaCompetition
+from sports.integrations.fifa import CompetitionMatch as FifaCompetitionMatch
 from sports.integrations.fifa import CompetitionType, FifaClient
 from sports.integrations.fifa import Gender as FifaGender
-from sports.integrations.fifa import LiveMatch, LiveMatchTeam, LocaleDescription
+from sports.integrations.fifa import (
+    Goal,
+    IApiMultipleResultsPaged,
+    LiveMatch,
+    LiveMatchCoach,
+    LiveMatchPlayer,
+    LiveMatchStaff,
+    LiveMatchTeam,
+    LocaleDescription,
+)
 from sports.integrations.fifa import MatchStatus as FifaMatchStatus
+from sports.integrations.fifa import MatchTeam
+from sports.integrations.fifa import Season as FifaSeason
+from sports.integrations.fifa import Stage as FifaStage
+from sports.integrations.fifa import Substitution
+from sports.integrations.fifa import Team as FifaTeam
 from sports.models import (
     Competition,
     CompetitionMapping,
@@ -337,3 +358,97 @@ class FifaClientQueryParamTests(TestCase):
         _, kwargs = client._client.get.call_args
         self.assertEqual(kwargs["params"].get("type"), CompetitionType.INTERNATIONAL.value)
         self.assertNotIn("competitionType", kwargs["params"])
+
+
+FIXTURES_DIR = Path(__file__).parent / "fixtures"
+
+
+def load_fixture(name):
+    with open(FIXTURES_DIR / name, encoding="utf-8") as f:
+        return json.load(f)
+
+
+class RealFifaApiResponseTests(TestCase):
+    """Guards sports/integrations/fifa.py's schemas against drift from the
+    real API. Each fixture is a genuine response captured from api.fifa.com
+    for FIFA World Cup 2026 (competition_id=17, season_id=285023) via
+    `curl -A "Mozilla/5.0" "https://api.fifa.com/api/v3/..."`.
+
+    Parsing alone isn't a strong enough check: pydantic's default
+    extra="ignore" silently drops any JSON key that doesn't match a field's
+    alias instead of raising, which is exactly how the training_center,
+    staff, territorial_possession/territorial_third_possession, match_day,
+    id_assist_player, and is_updatable(Stadium) bugs went unnoticed. So
+    every test here explicitly asserts zero unmapped keys, on top of
+    parsing successfully."""
+
+    def assert_all_keys_mapped(self, model_cls, data, label):
+        if data is None:
+            return
+        aliases = {f.alias for f in model_cls.model_fields.values() if f.alias}
+        unmapped = set(data.keys()) - aliases
+        self.assertEqual(unmapped, set(), f"{label}: unmapped API keys {unmapped}")
+
+    def test_competition_response(self):
+        data = load_fixture("competition_17.json")
+        self.assert_all_keys_mapped(FifaCompetition, data, "Competition")
+
+        competition = FifaCompetition.model_validate(data)
+        self.assertEqual(competition.id_competition, "17")
+
+    def test_season_response(self):
+        data = load_fixture("season_285023.json")
+        self.assert_all_keys_mapped(FifaSeason, data, "Season")
+
+        season = FifaSeason.model_validate(data)
+        self.assertEqual(season.id_season, "285023")
+        self.assertEqual(season.id_competition, "17")
+
+    def test_stages_response(self):
+        page = load_fixture("stages_285023.json")
+        for stage in page["Results"]:
+            self.assert_all_keys_mapped(FifaStage, stage, f"Stage {stage['IdStage']}")
+
+        parsed = TypeAdapter(IApiMultipleResultsPaged[FifaStage]).validate_python(page)
+        self.assertEqual(len(parsed.results), len(page["Results"]))
+
+    def test_matches_response(self):
+        page = load_fixture("matches_285023.json")
+        for match in page["Results"]:
+            self.assert_all_keys_mapped(FifaCompetitionMatch, match, f"Match {match['IdMatch']}")
+            self.assert_all_keys_mapped(MatchTeam, match.get("Home"), f"Match {match['IdMatch']} Home")
+            self.assert_all_keys_mapped(MatchTeam, match.get("Away"), f"Match {match['IdMatch']} Away")
+
+        parsed = TypeAdapter(IApiMultipleResultsPaged[FifaCompetitionMatch]).validate_python(page)
+        self.assertEqual(len(parsed.results), len(page["Results"]))
+
+    def test_teams_response(self):
+        page = load_fixture("teams_national.json")
+        for team in page["Results"]:
+            self.assert_all_keys_mapped(FifaTeam, team, f"Team {team['IdTeam']}")
+
+        parsed = TypeAdapter(IApiMultipleResultsPaged[FifaTeam]).validate_python(page)
+        self.assertEqual(len(parsed.results), len(page["Results"]))
+
+    def test_live_match_response(self):
+        data = load_fixture("live_match_400021541.json")
+        self.assert_all_keys_mapped(LiveMatch, data, "LiveMatch")
+
+        for side in ("HomeTeam", "AwayTeam"):
+            team = data.get(side)
+            self.assert_all_keys_mapped(LiveMatchTeam, team, side)
+            for player in team.get("Players") or []:
+                self.assert_all_keys_mapped(LiveMatchPlayer, player, f"{side} Player")
+            for coach in team.get("Coaches") or []:
+                self.assert_all_keys_mapped(LiveMatchCoach, coach, f"{side} Coach")
+            for staff in team.get("Staffs") or []:
+                self.assert_all_keys_mapped(LiveMatchStaff, staff, f"{side} Staff")
+            for goal in team.get("Goals") or []:
+                self.assert_all_keys_mapped(Goal, goal, f"{side} Goal")
+            for booking in team.get("Bookings") or []:
+                self.assert_all_keys_mapped(Booking, booking, f"{side} Booking")
+            for substitution in team.get("Substitutions") or []:
+                self.assert_all_keys_mapped(Substitution, substitution, f"{side} Substitution")
+
+        live_match = LiveMatch.model_validate(data)
+        self.assertEqual(live_match.id_match, "400021541")

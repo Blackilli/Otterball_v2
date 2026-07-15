@@ -388,7 +388,7 @@ class Stadium(BaseModel):
     length: str | None = Field(None, alias="Length")
     width: str | None = Field(None, alias="Width")
     properties: dict | None = Field(None, alias="Properties")
-    is_updatable: bool | None = Field(None, alias="IsUpdatable")
+    is_updatable: bool | None = Field(None, alias="IsUpdateable")
 
 
 class Team(BaseModel):
@@ -650,6 +650,7 @@ class CompetitionMatch(BaseModel):
     weather: WeatherConditions | None = Field(None, alias="Weather")
     attendance: str | None = Field(None, alias="Attendance")
     id_match: str | None = Field(None, alias="IdMatch")
+    match_day: str | None = Field(None, alias="MatchDay")
     stage_name: list[LocaleDescription] | None = Field(None, alias="StageName")
     group_name: list[LocaleDescription] | None = Field(None, alias="GroupName")
     competition_name: list[LocaleDescription] | None = Field(None, alias="CompetitionName")
@@ -721,6 +722,7 @@ class Substitution(BaseModel):
 class Goal(BaseModel):
     type: GoalType | None = Field(None, alias="Type")
     id_player: str | None = Field(None, alias="IdPlayer")
+    id_assist_player: str | None = Field(None, alias="IdAssistPlayer")
     minute: str | None = Field(None, alias="Minute")
     period: Period | None = Field(None, alias="Period")
     id_goal: str | None = Field(None, alias="IdGoal")
