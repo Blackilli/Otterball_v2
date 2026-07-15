@@ -20,6 +20,10 @@ Hyperion/
 *.egg
 MANIFEST
 
+.pytest_cache/
+.coverage
+htmlcov/
+
 db.sqlite3
 *.log
 *.sqlite3
@@ -33,6 +37,9 @@ staticfiles/
 .idea/
 *.iml
 *.iws
+.vscode/
+
+.claude/
 
 .DS_Store
 .DS_Store?

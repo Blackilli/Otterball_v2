@@ -24,6 +24,7 @@ htmlcov/
 datadump.json
 db.sqlite3
 *.log
+backups/
 
 media/
 static/
@@ -36,3 +37,5 @@ static/
 *.sln
 *.sw?
 .DS_Store
+
+.claude/
