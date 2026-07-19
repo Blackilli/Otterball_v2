@@ -1,6 +1,11 @@
+import csv
+import datetime
+import tempfile
+from io import StringIO
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.core.management import call_command
 from django.test import TestCase
 from django.utils import timezone
 
@@ -384,3 +389,113 @@ class LeaderboardTests(TestCase):
         self.assertEqual(points_by_user["bob"], 0)
         self.assertEqual(points_by_user["carol"], 0)
         self.assertEqual(points_by_user["dave"], 0)
+
+
+class ExportPointHistoryTests(TestCase):
+    """Covers the export_point_history management command: one CSV row per
+    finished match in kickoff order, one cumulative points column per user."""
+
+    def setUp(self):
+        self.competition = Competition.objects.create(name="World Cup")
+        self.season = Season.objects.create(name="2026 World Cup", competition=self.competition, year=2026)
+        self.stage = Stage.objects.create(season=self.season, name="Group A", stage_type=StageType.GROUP, level=1)
+        self.home_team = Team.objects.create(name="Germany")
+        self.away_team = Team.objects.create(name="Brazil")
+        self.pool = PredictionPool.objects.create(name="Test Pool", season=self.season)
+        self.alice = User.objects.create_user(username="alice")
+        self.bob = User.objects.create_user(username="bob")
+
+    def make_match(self, kickoff, status=MatchStatus.FINISHED):
+        return Match.objects.create(
+            stage=self.stage,
+            home_team=self.home_team,
+            away_team=self.away_team,
+            kickoff=kickoff,
+            status=status,
+            home_score=1,
+            away_score=0,
+        )
+
+    def award(self, user, match, points):
+        Prediction.objects.create(
+            pool=self.pool,
+            match=match,
+            user=user,
+            predicted_outcome=MatchOutcome.HOME_WIN,
+            points_awarded=points,
+            is_processed=True,
+        )
+
+    def run_command(self, *args):
+        out = StringIO()
+        call_command("export_point_history", self.pool.id, *args, stdout=out)
+        return list(csv.reader(StringIO(out.getvalue())))
+
+    def test_rows_accumulate_points_per_user_in_kickoff_order(self):
+        first = self.make_match(datetime.datetime(2026, 6, 11, 18, tzinfo=datetime.timezone.utc))
+        second = self.make_match(datetime.datetime(2026, 6, 12, 18, tzinfo=datetime.timezone.utc))
+        self.award(self.alice, first, 3)
+        self.award(self.bob, first, 0)
+        self.award(self.alice, second, 5)
+        self.award(self.bob, second, 5)
+
+        rows = self.run_command()
+
+        self.assertEqual(rows[0], ["kickoff", "match", "alice", "bob"])
+        self.assertEqual(rows[1], ["2026-06-11T18:00:00+00:00", "Germany vs. Brazil", "3", "0"])
+        self.assertEqual(rows[2], ["2026-06-12T18:00:00+00:00", "Germany vs. Brazil", "8", "5"])
+
+    def test_user_without_prediction_on_a_match_keeps_previous_total(self):
+        first = self.make_match(datetime.datetime(2026, 6, 11, 18, tzinfo=datetime.timezone.utc))
+        second = self.make_match(datetime.datetime(2026, 6, 12, 18, tzinfo=datetime.timezone.utc))
+        self.award(self.alice, first, 3)
+        self.award(self.bob, first, 3)
+        self.award(self.bob, second, 5)
+
+        rows = self.run_command()
+
+        self.assertEqual(rows[1][2:], ["3", "3"])
+        self.assertEqual(rows[2][2:], ["3", "8"])
+
+    def test_unfinished_matches_are_excluded(self):
+        finished = self.make_match(datetime.datetime(2026, 6, 11, 18, tzinfo=datetime.timezone.utc))
+        scheduled = self.make_match(
+            datetime.datetime(2026, 6, 12, 18, tzinfo=datetime.timezone.utc),
+            status=MatchStatus.SCHEDULED,
+        )
+        self.award(self.alice, finished, 3)
+        self.award(self.alice, scheduled, 0)
+
+        rows = self.run_command()
+
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[1][2:], ["3"])
+
+    def test_predictions_from_other_pools_are_ignored(self):
+        match = self.make_match(datetime.datetime(2026, 6, 11, 18, tzinfo=datetime.timezone.utc))
+        other_pool = PredictionPool.objects.create(name="Other Pool", season=self.season)
+        Prediction.objects.create(
+            pool=other_pool,
+            match=match,
+            user=self.bob,
+            predicted_outcome=MatchOutcome.HOME_WIN,
+            points_awarded=7,
+            is_processed=True,
+        )
+        self.award(self.alice, match, 3)
+
+        rows = self.run_command()
+
+        self.assertEqual(rows[0], ["kickoff", "match", "alice"])
+        self.assertEqual(rows[1][2:], ["3"])
+
+    def test_writes_to_file_when_output_path_given(self):
+        match = self.make_match(datetime.datetime(2026, 6, 11, 18, tzinfo=datetime.timezone.utc))
+        self.award(self.alice, match, 3)
+
+        with tempfile.NamedTemporaryFile(mode="r", suffix=".csv") as f:
+            self.run_command(f.name)
+            rows = list(csv.reader(f))
+
+        self.assertEqual(rows[0], ["kickoff", "match", "alice"])
+        self.assertEqual(rows[1][2:], ["3"])
