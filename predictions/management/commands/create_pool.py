@@ -214,16 +214,25 @@ class Command(BaseCommand):
             except DiscordGuildRole.DoesNotExist:
                 raise CommandError(f"No role {options['notification_role']} in guild {guild.name}.")
 
+        # Only write what was actually asked for. Passing channel/role
+        # unconditionally would null them out on a partial re-run - rotating
+        # just the ping role would silently unset the channel, and the pool
+        # would stop posting entirely. Same guard shape as apply_configuration.
+        defaults: dict = {"is_active": True}
+        if options["channel"]:
+            defaults["channel"] = channel
+        if options["notification_role"]:
+            defaults["notification_role"] = role
+
         guild_pool, created = DiscordGuildPool.objects.update_or_create(
             guild=guild,
             pool=pool,
-            defaults={"channel": channel, "notification_role": role, "is_active": True},
+            defaults=defaults,
         )
+        guild_pool.refresh_from_db()
         verb = "Bound" if created else "Rebound"
-        where = f"#{channel.name}" if channel else "no channel yet"
+        where = f"#{guild_pool.channel.name}" if guild_pool.channel else "no channel yet"
         self.stdout.write(f"  {verb} to {guild.name} ({where})")
 
-        if not channel:
-            self.stdout.write(
-                self.style.WARNING("  no --channel given: polls and the leaderboard have nowhere to post")
-            )
+        if not guild_pool.channel:
+            self.stdout.write(self.style.WARNING("  no channel set: polls and the leaderboard have nowhere to post"))

@@ -2,6 +2,7 @@ import csv
 import datetime
 import tempfile
 from io import StringIO
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.contrib.admin.sites import AdminSite
@@ -883,12 +884,12 @@ class CheckPoolCommandTests(TestCase):
 
 
 class PredictionPoolAdminSeedingTests(TestCase):
-    """Covers PredictionPoolAdmin.save_model, which is where a pool created
-    through /admin/ gets its stage rules.
+    """Covers PredictionPoolAdmin.save_related, which is where a pool saved
+    through /admin/ gets its stage rules topped up.
 
-    This is the path the runbook tells you to use, so it is the one that has
-    to seed - creating a pool through the admin and forgetting to add rules by
-    hand is exactly how a pool ends up scoring every round the same."""
+    Seeding hangs off save_related rather than save_model so that inline rows
+    the user added are written first - see PredictionPoolAdminInlineTests for
+    the collision that ordering prevents."""
 
     def setUp(self):
         self.competition = Competition.objects.create(name="NFL", sport=Sport.AMERICAN_FOOTBALL)
@@ -903,10 +904,16 @@ class PredictionPoolAdminSeedingTests(TestCase):
         setattr(self.request, "session", "session")
         setattr(self.request, "_messages", FallbackStorage(self.request))
 
-    def test_saving_a_pool_in_the_admin_seeds_its_stage_rules(self):
-        pool = PredictionPool(name="NFL Pool", season=self.season)
+    def save(self, pool, change=False):
+        # ModelAdmin.save_related calls form.save_m2m() before delegating to
+        # the inline formsets; a no-op stands in for it here.
+        form = SimpleNamespace(instance=pool, save_m2m=lambda: None)
+        self.admin.save_related(self.request, form, formsets=[], change=change)
 
-        self.admin.save_model(self.request, pool, form=None, change=False)
+    def test_saving_a_pool_in_the_admin_seeds_its_stage_rules(self):
+        pool = PredictionPool.objects.create(name="NFL Pool", season=self.season)
+
+        self.save(pool)
 
         self.assertEqual(
             sorted(pool.stage_rules.values_list("stage__name", flat=True)),
@@ -914,15 +921,494 @@ class PredictionPoolAdminSeedingTests(TestCase):
         )
 
     def test_saving_again_tops_up_without_disturbing_edited_points(self):
-        pool = PredictionPool(name="NFL Pool", season=self.season)
-        self.admin.save_model(self.request, pool, form=None, change=False)
+        pool = PredictionPool.objects.create(name="NFL Pool", season=self.season)
+        self.save(pool)
         rule = pool.stage_rules.get(stage__name="Super Bowl")
         rule.points_per_correct = 5
         rule.save()
         Stage.objects.create(season=self.season, name="Wild Card", level=2)
 
-        self.admin.save_model(self.request, pool, form=None, change=True)
+        self.save(pool, change=True)
 
         self.assertEqual(pool.stage_rules.count(), 3)
         rule.refresh_from_db()
         self.assertEqual(rule.points_per_correct, 5)
+
+
+class LeaderboardScopingTests(TestCase):
+    """Covers PredictionPool.aget_user_with_points / aget_leaderboard
+    (predictions/models.py).
+
+    The ranking must be scoped to the pool being ranked. Before this was
+    enforced, every User row in the database got annotated: non-participants
+    came back with total_points = NULL, and Postgres sorts NULLs first on a
+    DESC order, so members of an unrelated pool silently occupied the top
+    ranks and pushed the real players down. The leaderboard cog hides them
+    from the rendered embed but not from the rank numbers, so the visible
+    effect was a leaderboard that started at rank 40 instead of rank 1."""
+
+    def setUp(self):
+        self.competition = Competition.objects.create(name="NFL")
+        self.season = Season.objects.create(name="NFL 2026", competition=self.competition, year=2026)
+        self.stage = Stage.objects.create(season=self.season, name="Regular Season", stage_type=StageType.LEAGUE)
+        self.home_team = Team.objects.create(name="Cleveland Browns")
+        self.away_team = Team.objects.create(name="Minnesota Vikings")
+        self.match = Match.objects.create(
+            stage=self.stage,
+            home_team=self.home_team,
+            away_team=self.away_team,
+            kickoff=timezone.now(),
+            status=MatchStatus.FINISHED,
+            home_score=17,
+            away_score=21,
+        )
+        self.pool = PredictionPool.objects.create(name="NFL Pool", season=self.season)
+        self.other_pool = PredictionPool.objects.create(name="World Cup Pool", season=self.season)
+
+    def make_prediction(self, user, pool, points, outcome=MatchOutcome.AWAY_WIN):
+        return Prediction.objects.create(
+            pool=pool,
+            match=self.match,
+            user=user,
+            predicted_outcome=outcome,
+            points_awarded=points,
+            is_processed=True,
+        )
+
+    async def collect(self, pool):
+        return [(rank, user.username, points) async for rank, user, points in pool.aget_leaderboard()]
+
+    async def test_users_from_another_pool_are_not_ranked(self):
+        player = await User.objects.acreate_user(username="nfl_player")
+        outsider = await User.objects.acreate_user(username="worldcup_only")
+        await User.objects.acreate_user(username="admin_who_never_plays")
+
+        await Prediction.objects.acreate(
+            pool=self.pool, match=self.match, user=player, predicted_outcome=MatchOutcome.AWAY_WIN, points_awarded=3
+        )
+        await Prediction.objects.acreate(
+            pool=self.other_pool,
+            match=self.match,
+            user=outsider,
+            predicted_outcome=MatchOutcome.AWAY_WIN,
+            points_awarded=99,
+        )
+
+        leaderboard = await self.collect(self.pool)
+
+        self.assertEqual(leaderboard, [(1, "nfl_player", 3)])
+
+    async def test_points_are_summed_per_pool_not_across_pools(self):
+        player = await User.objects.acreate_user(username="dual_player")
+        await Prediction.objects.acreate(
+            pool=self.pool, match=self.match, user=player, predicted_outcome=MatchOutcome.AWAY_WIN, points_awarded=3
+        )
+        await Prediction.objects.acreate(
+            pool=self.other_pool,
+            match=self.match,
+            user=player,
+            predicted_outcome=MatchOutcome.AWAY_WIN,
+            points_awarded=50,
+        )
+
+        self.assertEqual(await self.collect(self.pool), [(1, "dual_player", 3)])
+        self.assertEqual(await self.collect(self.other_pool), [(1, "dual_player", 50)])
+
+    async def test_order_is_stable_across_calls(self):
+        """The leaderboard cog diffs a fingerprint of this list to decide
+        whether to edit its Discord message; an unstable order among tied
+        users would make it rewrite the message forever."""
+        for name in ("zoe", "adam", "mia"):
+            user = await User.objects.acreate_user(username=name)
+            await Prediction.objects.acreate(
+                pool=self.pool,
+                match=self.match,
+                user=user,
+                predicted_outcome=MatchOutcome.AWAY_WIN,
+                points_awarded=7,
+            )
+
+        self.assertEqual(await self.collect(self.pool), await self.collect(self.pool))
+
+    async def test_empty_pool_yields_nothing(self):
+        await User.objects.acreate_user(username="bystander")
+        self.assertEqual(await self.collect(self.pool), [])
+
+
+class SyncPoolStageRulesTests(TestCase):
+    """Covers sync_pool_stage_rules (predictions/models.py), called explicitly
+    by the admin and by `manage.py create_pool`.
+
+    Without rules, predictions/signals.py falls back to a hardcoded 3 points
+    per correct pick - so a pool meant to scale points per round scores every
+    round identically, with nothing logged. Seeding the rows makes that
+    visible and editable."""
+
+    def setUp(self):
+        self.competition = Competition.objects.create(name="NFL")
+        self.season = Season.objects.create(name="NFL 2026", competition=self.competition, year=2026)
+        self.stages = [
+            Stage.objects.create(season=self.season, name=name, level=level, stage_type=stage_type)
+            for name, level, stage_type in (
+                ("Regular Season", 0, StageType.LEAGUE),
+                ("Wild Card", 1, StageType.KNOCK_OUT),
+                ("Super Bowl", 2, StageType.KNOCK_OUT),
+            )
+        ]
+
+    def test_seeds_one_rule_per_stage(self):
+        pool = PredictionPool.objects.create(name="NFL Pool", season=self.season)
+
+        sync_pool_stage_rules(pool)
+
+        rules = pool.stage_rules.order_by("level")
+        self.assertEqual([r.stage.name for r in rules], ["Regular Season", "Wild Card", "Super Bowl"])
+        self.assertEqual([r.level for r in rules], [0, 1, 2])
+
+    def test_seeded_rules_do_not_change_scoring(self):
+        """Seeding is about visibility, not behaviour: the value must match
+        the fallback that predictions/signals.py already applied."""
+        pool = PredictionPool.objects.create(name="NFL Pool", season=self.season)
+
+        sync_pool_stage_rules(pool)
+
+        self.assertTrue(all(r.points_per_correct == 3 for r in pool.stage_rules.all()))
+
+    def test_is_idempotent_and_preserves_edited_points(self):
+        pool = PredictionPool.objects.create(name="NFL Pool", season=self.season)
+        sync_pool_stage_rules(pool)
+        rule = pool.stage_rules.get(stage=self.stages[2])
+        rule.points_per_correct = 5
+        rule.save()
+
+        created = sync_pool_stage_rules(pool)
+
+        self.assertEqual(created, [])
+        self.assertEqual(pool.stage_rules.count(), 3)
+        rule.refresh_from_db()
+        self.assertEqual(rule.points_per_correct, 5)
+
+    def test_tops_up_rules_when_the_season_gains_a_stage(self):
+        """NFL playoff rounds only exist once the bracket is known, so a pool
+        created in September must pick them up later."""
+        pool = PredictionPool.objects.create(name="NFL Pool", season=self.season)
+        sync_pool_stage_rules(pool)
+        new_stage = Stage.objects.create(season=self.season, name="Divisional", level=3)
+
+        created = sync_pool_stage_rules(pool)
+
+        self.assertEqual([r.stage_id for r in created], [new_stage.id])
+        self.assertEqual(pool.stage_rules.count(), 4)
+
+    def test_a_pool_on_a_season_without_stages_seeds_nothing(self):
+        empty_season = Season.objects.create(name="Empty", competition=self.competition, year=2099)
+
+        pool = PredictionPool.objects.create(name="Empty Pool", season=empty_season)
+
+        self.assertEqual(sync_pool_stage_rules(pool), [])
+        self.assertEqual(pool.stage_rules.count(), 0)
+
+    def test_rules_from_another_season_are_untouched(self):
+        other_season = Season.objects.create(name="Other", competition=self.competition, year=2027)
+        Stage.objects.create(season=other_season, name="Regular Season", level=0)
+
+        pool = PredictionPool.objects.create(name="NFL Pool", season=self.season)
+        other_pool = PredictionPool.objects.create(name="Other Pool", season=other_season)
+        sync_pool_stage_rules(pool)
+        sync_pool_stage_rules(other_pool)
+
+        self.assertEqual(pool.stage_rules.count(), 3)
+        self.assertEqual(other_pool.stage_rules.count(), 1)
+
+
+class CreatePoolCommandTests(TestCase):
+    """Covers the create_pool management command."""
+
+    def setUp(self):
+        self.competition = Competition.objects.create(name="NFL", sport=Sport.AMERICAN_FOOTBALL)
+        self.season = Season.objects.create(name="NFL 2026", competition=self.competition, year=2026)
+        for name, level in (("Regular Season", 0), ("Wild Card", 1), ("Super Bowl", 2)):
+            Stage.objects.create(season=self.season, name=name, level=level)
+
+    def call(self, **kwargs):
+        out = StringIO()
+        call_command("create_pool", stdout=out, **kwargs)
+        return out.getvalue()
+
+    def test_creates_pool_configuration_and_rules(self):
+        self.call(name="NFL Pool", season=self.season.id, weekdays="2", time="18:00", lookahead=7)
+
+        pool = PredictionPool.objects.get(name="NFL Pool")
+        self.assertEqual(pool.configuration.poll_creation_weekdays, [2])
+        self.assertEqual(pool.configuration.poll_creation_time, datetime.time(18, 0))
+        self.assertEqual(pool.configuration.poll_creation_lookahead_days, 7)
+        self.assertEqual(pool.stage_rules.count(), 3)
+
+    def test_sets_points_per_stage_by_name(self):
+        self.call(name="NFL Pool", season=self.season.id, points="Regular Season=1,Super Bowl=5")
+
+        pool = PredictionPool.objects.get(name="NFL Pool")
+        by_name = {r.stage.name: r.points_per_correct for r in pool.stage_rules.select_related("stage")}
+        self.assertEqual(by_name["Regular Season"], 1)
+        self.assertEqual(by_name["Super Bowl"], 5)
+        # Unmentioned stages keep the seeded default.
+        self.assertEqual(by_name["Wild Card"], 3)
+
+    def test_rerunning_updates_rather_than_duplicating(self):
+        self.call(name="NFL Pool", season=self.season.id, points="Super Bowl=5")
+        self.call(name="NFL Pool", season=self.season.id, points="Super Bowl=8")
+
+        self.assertEqual(PredictionPool.objects.filter(name="NFL Pool").count(), 1)
+        pool = PredictionPool.objects.get(name="NFL Pool")
+        self.assertEqual(pool.stage_rules.get(stage__name="Super Bowl").points_per_correct, 8)
+
+    def test_resolves_the_season_by_sport_and_year(self):
+        self.call(name="NFL Pool", sport=Sport.AMERICAN_FOOTBALL, year=2026)
+
+        self.assertEqual(PredictionPool.objects.get(name="NFL Pool").season_id, self.season.id)
+
+    def test_rejects_an_unknown_stage_name(self):
+        with self.assertRaises(CommandError) as ctx:
+            self.call(name="NFL Pool", season=self.season.id, points="Divisional=3")
+        self.assertIn("Divisional", str(ctx.exception))
+
+    def test_rejects_an_out_of_range_lookahead(self):
+        with self.assertRaises(CommandError):
+            self.call(name="NFL Pool", season=self.season.id, lookahead=30)
+
+    def test_rejects_empty_weekdays(self):
+        """No weekdays means polls never post, so it must not be accepted."""
+        with self.assertRaises(CommandError):
+            self.call(name="NFL Pool", season=self.season.id, weekdays=",")
+
+    def test_requires_a_season(self):
+        with self.assertRaises(CommandError):
+            self.call(name="NFL Pool")
+
+    def test_binding_before_the_bot_has_connected_is_a_clear_error(self):
+        with self.assertRaises(CommandError) as ctx:
+            self.call(name="NFL Pool", season=self.season.id, guild=123456)
+        self.assertIn("start it once", str(ctx.exception))
+
+    def test_binds_to_a_guild_channel_and_role(self):
+        guild = DiscordGuild.objects.create(id=1, name="Otter Server")
+        channel = DiscordChannel.objects.create(id=2, guild=guild, name="nfl-picks", channel_type="text")
+        role = DiscordGuildRole.objects.create(id=3, guild=guild, name="Pickers")
+
+        self.call(
+            name="NFL Pool",
+            season=self.season.id,
+            guild=guild.id,
+            channel=channel.id,
+            notification_role=role.id,
+        )
+
+        binding = DiscordGuildPool.objects.get(pool__name="NFL Pool")
+        self.assertEqual((binding.guild_id, binding.channel_id, binding.notification_role_id), (1, 2, 3))
+        self.assertTrue(binding.is_active)
+
+
+class CheckPoolCommandTests(TestCase):
+    """Covers the check_pool management command, which exists because nearly
+    every pool misconfiguration is otherwise silent."""
+
+    def setUp(self):
+        self.competition = Competition.objects.create(name="NFL", sport=Sport.AMERICAN_FOOTBALL)
+        self.season = Season.objects.create(name="NFL 2026", competition=self.competition, year=2026)
+        self.stage = Stage.objects.create(
+            season=self.season, name="Regular Season", level=0, stage_type=StageType.LEAGUE
+        )
+        self.home = Team.objects.create(name="Browns")
+        self.away = Team.objects.create(name="Vikings")
+        Match.objects.create(
+            stage=self.stage,
+            home_team=self.home,
+            away_team=self.away,
+            kickoff=timezone.now() + datetime.timedelta(days=2),
+        )
+        self.pool = PredictionPool.objects.create(name="NFL Pool", season=self.season)
+        sync_pool_stage_rules(self.pool)
+
+    def run_check(self, **kwargs):
+        out = StringIO()
+        try:
+            call_command("check_pool", pool=self.pool.id, stdout=out, **kwargs)
+            exit_code = 0
+        except SystemExit as e:
+            exit_code = e.code
+        return out.getvalue(), exit_code
+
+    def test_reports_a_missing_discord_binding_as_a_failure(self):
+        report, exit_code = self.run_check()
+
+        self.assertIn("no Discord binding", report)
+        self.assertIn("FAIL", report)
+        self.assertEqual(exit_code, 1)
+
+    def test_passes_once_the_pool_is_fully_configured(self):
+        guild = DiscordGuild.objects.create(id=1, name="Otter Server")
+        channel = DiscordChannel.objects.create(id=2, guild=guild, name="picks", channel_type="text")
+        DiscordGuildPool.objects.create(pool=self.pool, guild=guild, channel=channel)
+        DiscordTeamEmoji.objects.create(id=10, team=self.home, name="browns")
+        DiscordTeamEmoji.objects.create(id=11, team=self.away, name="vikings")
+        self.pool.stage_rules.update(points_per_correct=1)
+
+        report, exit_code = self.run_check()
+
+        self.assertNotIn("FAIL", report)
+        self.assertEqual(exit_code, 0)
+
+    def test_flags_a_stage_type_with_no_poll_layout(self):
+        """An unmapped stage type makes poll creation skip every match in it."""
+        self.stage.stage_type = StageType.OTHER
+        self.stage.save()
+
+        report, _ = self.run_check()
+
+        self.assertIn("no poll layout", report)
+        self.assertIn("FAIL", report)
+
+    def test_flags_missing_stage_rules(self):
+        self.pool.stage_rules.all().delete()
+
+        report, _ = self.run_check()
+
+        self.assertIn("no scoring rule", report)
+        self.assertIn("fallback of 3", report)
+
+    def test_flags_a_binding_with_no_channel(self):
+        guild = DiscordGuild.objects.create(id=1, name="Otter Server")
+        DiscordGuildPool.objects.create(pool=self.pool, guild=guild, channel=None)
+
+        report, _ = self.run_check()
+
+        self.assertIn("no channel", report)
+
+    def test_flags_an_empty_poll_schedule(self):
+        self.pool.configuration.poll_creation_weekdays = []
+        self.pool.configuration.save()
+
+        report, _ = self.run_check()
+
+        self.assertIn("no poll creation weekdays", report)
+
+    def test_reports_the_points_distribution(self):
+        rule = self.pool.stage_rules.get(stage=self.stage)
+        rule.points_per_correct = 7
+        rule.save()
+
+        report, _ = self.run_check()
+
+        self.assertIn("Regular Season=7", report)
+
+
+class PredictionPoolAdminInlineTests(TestCase):
+    """Regression tests for seeding vs. inline stage-rule rows.
+
+    Django saves inline formsets in save_related, which runs *after*
+    save_model. Seeding in save_model inserted a rule for the very stage the
+    user had just added an inline row for, and their row then collided with
+    the unique (pool, stage) constraint - a 500 in exactly the workflow the
+    inline exists to support. These drive a real admin POST rather than
+    calling the hook directly, because calling save_model alone never builds a
+    formset and so cannot catch this."""
+
+    def setUp(self):
+        self.competition = Competition.objects.create(name="NFL", sport=Sport.AMERICAN_FOOTBALL)
+        self.season = Season.objects.create(name="NFL 2026", competition=self.competition, year=2026)
+        self.stages = {
+            name: Stage.objects.create(season=self.season, name=name, level=level)
+            for name, level in (("Regular Season", 0), ("Wild Card", 1), ("Super Bowl", 2))
+        }
+        self.client.force_login(User.objects.create_superuser(username="admin", password="pw"))
+
+    def post_add(self, **rule):
+        """POST the pool add-form, optionally with one inline stage rule."""
+        data = {
+            "name": "NFL Pool",
+            "season": self.season.id,
+            "is_active": "on",
+            # PoolConfiguration inline (one-to-one, primary key on pool)
+            "configuration-TOTAL_FORMS": "1",
+            "configuration-INITIAL_FORMS": "0",
+            "configuration-MIN_NUM_FORMS": "0",
+            "configuration-MAX_NUM_FORMS": "1",
+            "configuration-0-poll_creation_weekdays": ["2"],
+            "configuration-0-poll_creation_time": "18:00:00",
+            "configuration-0-poll_creation_lookahead_days": "7",
+            # PoolStageRule inline
+            "stage_rules-TOTAL_FORMS": "1" if rule else "0",
+            "stage_rules-INITIAL_FORMS": "0",
+            "stage_rules-MIN_NUM_FORMS": "0",
+            "stage_rules-MAX_NUM_FORMS": "1000",
+        }
+        if rule:
+            data["stage_rules-0-stage"] = rule["stage"].id
+            data["stage_rules-0-level"] = rule["level"]
+            data["stage_rules-0-points_per_correct"] = rule["points"]
+        return self.client.post("/admin/predictions/predictionpool/add/", data)
+
+    def test_adding_a_pool_with_an_inline_rule_does_not_collide(self):
+        response = self.post_add(stage=self.stages["Wild Card"], level=1, points=10)
+
+        self.assertEqual(response.status_code, 302, "admin add should redirect, not error")
+        pool = PredictionPool.objects.get(name="NFL Pool")
+        by_name = {r.stage.name: r.points_per_correct for r in pool.stage_rules.select_related("stage")}
+        # The user's own row survives...
+        self.assertEqual(by_name["Wild Card"], 10)
+        # ...and the remaining stages are topped up.
+        self.assertEqual(sorted(by_name), ["Regular Season", "Super Bowl", "Wild Card"])
+
+    def test_adding_a_pool_without_inline_rows_still_seeds_every_stage(self):
+        response = self.post_add()
+
+        self.assertEqual(response.status_code, 302)
+        pool = PredictionPool.objects.get(name="NFL Pool")
+        self.assertEqual(pool.stage_rules.count(), 3)
+
+
+class CreatePoolPartialRebindTests(TestCase):
+    """Regression tests for partial re-runs of create_pool's Discord binding.
+
+    The command advertises itself as idempotent and the runbook tells you to
+    re-run it to rebind, so a re-run that omits a flag must leave that field
+    alone. Passing them unconditionally nulled the channel out, which stops
+    the pool posting anything at all."""
+
+    def setUp(self):
+        self.competition = Competition.objects.create(name="NFL", sport=Sport.AMERICAN_FOOTBALL)
+        self.season = Season.objects.create(name="NFL 2026", competition=self.competition, year=2026)
+        Stage.objects.create(season=self.season, name="Regular Season", level=0)
+
+        self.guild = DiscordGuild.objects.create(id=1, name="Otter Server")
+        self.channel = DiscordChannel.objects.create(id=2, guild=self.guild, name="picks", channel_type="text")
+        self.role = DiscordGuildRole.objects.create(id=3, guild=self.guild, name="Pickers")
+        self.new_role = DiscordGuildRole.objects.create(id=4, guild=self.guild, name="New Pickers")
+
+        self.call(guild=1, channel=2, notification_role=3)
+
+    def call(self, **kwargs):
+        call_command("create_pool", name="NFL Pool", season=self.season.id, stdout=StringIO(), **kwargs)
+        return DiscordGuildPool.objects.get(pool__name="NFL Pool")
+
+    def test_rotating_only_the_role_keeps_the_channel(self):
+        binding = self.call(guild=1, notification_role=4)
+
+        self.assertEqual(binding.channel_id, 2, "channel must survive a role-only re-run")
+        self.assertEqual(binding.notification_role_id, 4)
+
+    def test_changing_only_the_channel_keeps_the_role(self):
+        other = DiscordChannel.objects.create(id=5, guild=self.guild, name="picks-2", channel_type="text")
+
+        binding = self.call(guild=1, channel=other.id)
+
+        self.assertEqual(binding.channel_id, 5)
+        self.assertEqual(binding.notification_role_id, 3, "role must survive a channel-only re-run")
+
+    def test_a_bare_guild_rerun_changes_nothing_but_reactivates(self):
+        DiscordGuildPool.objects.filter(pool__name="NFL Pool").update(is_active=False)
+
+        binding = self.call(guild=1)
+
+        self.assertEqual((binding.channel_id, binding.notification_role_id), (2, 3))
+        self.assertTrue(binding.is_active)

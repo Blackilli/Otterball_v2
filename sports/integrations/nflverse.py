@@ -141,6 +141,11 @@ class NflverseClient:
 
         for row in csv.DictReader(io.StringIO(csv_text)):
             if seasons is not None:
+                # The unparenthesized except group below is PEP 758, new in
+                # Python 3.14 (which this project requires, and which the
+                # Dockerfile pins). It reads as a SyntaxError on older
+                # interpreters and to tooling that has not caught up; black
+                # normalizes to this form, so don't "fix" the parentheses back.
                 try:
                     if int(row["season"]) not in seasons:
                         continue

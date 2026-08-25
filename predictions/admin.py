@@ -89,10 +89,22 @@ class PredictionPoolAdmin(admin.ModelAdmin):
     def stage_rule_count(self, pool: PredictionPool) -> int:
         return pool.stage_rules.count()
 
-    def save_model(self, request, obj, form, change):
-        super().save_model(request, obj, form, change)
-        # Top up on every save, not just creation: a season gains its playoff
-        # stages partway through, and those need rules too.
-        seeded = sync_pool_stage_rules(obj)
+    def save_related(self, request, form, formsets, change):
+        """Seed missing stage rules *after* the inlines have been written.
+
+        This has to run here rather than in save_model. Django saves inline
+        formsets in save_related, which runs after save_model - so seeding
+        earlier would insert a rule for a stage the user had just added a row
+        for, and their row would then collide with the unique (pool, stage)
+        constraint and 500 the request. Since sync_pool_stage_rules only
+        creates rules for stages that don't have one, running last lets the
+        user's own rows win and tops up the rest.
+
+        Runs on every save, not just creation: a season gains its playoff
+        stages partway through, and those need rules too.
+        """
+        super().save_related(request, form, formsets, change)
+
+        seeded = sync_pool_stage_rules(form.instance)
         if seeded:
             self.message_user(request, f"Seeded {len(seeded)} stage rule(s) - set the points below.")
