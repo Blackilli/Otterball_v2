@@ -23,7 +23,10 @@ from sports.integrations.espn import (
     SeasonTypeInfo,
 )
 from sports.integrations.espn import Team as EspnTeam
-from sports.integrations.espn import Week, _ref_segment
+from sports.integrations.espn import (
+    Week,
+    _ref_segment,
+)
 from sports.models import (
     Competition,
     CompetitionMapping,

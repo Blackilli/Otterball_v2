@@ -14,7 +14,10 @@ from sports.integrations.fifa import (
 )
 from sports.integrations.fifa import Competition as FifaCompetition
 from sports.integrations.fifa import CompetitionMatch as FifaCompetitionMatch
-from sports.integrations.fifa import CompetitionType, FifaClient
+from sports.integrations.fifa import (
+    CompetitionType,
+    FifaClient,
+)
 from sports.integrations.fifa import Gender as FifaGender
 from sports.integrations.fifa import (
     Goal,
@@ -27,10 +30,15 @@ from sports.integrations.fifa import (
     LocaleDescription,
 )
 from sports.integrations.fifa import MatchStatus as FifaMatchStatus
-from sports.integrations.fifa import MatchTeam, ResultType
+from sports.integrations.fifa import (
+    MatchTeam,
+    ResultType,
+)
 from sports.integrations.fifa import Season as FifaSeason
 from sports.integrations.fifa import Stage as FifaStage
-from sports.integrations.fifa import Substitution
+from sports.integrations.fifa import (
+    Substitution,
+)
 from sports.integrations.fifa import Team as FifaTeam
 from sports.models import (
     Competition,

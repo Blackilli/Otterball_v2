@@ -46,3 +46,7 @@ staticfiles/
 ehthumbs.db
 Icon?
 Thumbs.db
+
+# Ad-hoc exports from `manage.py export_point_history` etc. Root-level only,
+# so committed CSV test fixtures under sports/tests/fixtures/ are unaffected.
+/*.csv
