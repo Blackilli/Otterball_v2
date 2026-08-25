@@ -8,7 +8,7 @@ from django.contrib.postgres.fields import ArrayField
 from django.core.exceptions import ValidationError
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
-from django.db.models import Q, Sum
+from django.db.models import Count, Q, Sum
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 from django.utils import timezone
@@ -70,14 +70,27 @@ class PredictionPool(models.Model):
         return f"{self.name} (Season ID #{self.season_id})"
 
     async def aget_user_with_points(self) -> AsyncGenerator[tuple[User, int], Any]:
+        # Only users who actually play in *this* pool are ranked. Without the
+        # prediction_count filter every User row is annotated, non-participants
+        # come back with total_points = NULL, and Postgres sorts NULLs first on
+        # a DESC order - so members of an unrelated pool would silently occupy
+        # the top ranks and push this pool's players down.
+        # Ties are broken by id purely so the order is stable: the leaderboard
+        # cog diffs a fingerprint of this list to decide whether to edit its
+        # Discord message, and an unstable order would make it edit forever.
         async for user in (
             User.objects.annotate(
                 total_points=Sum(
                     "predictions__points_awarded",
                     filter=Q(predictions__pool=self),
-                )
+                ),
+                pool_prediction_count=Count(
+                    "predictions",
+                    filter=Q(predictions__pool=self),
+                ),
             )
-            .order_by("-total_points")
+            .filter(pool_prediction_count__gt=0)
+            .order_by("-total_points", "id")
             .aiterator()
         ):
             yield user, (user.total_points or 0)

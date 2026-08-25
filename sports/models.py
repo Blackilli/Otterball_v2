@@ -25,6 +25,7 @@ class StageType(models.TextChoices):
 class SportsProvider(models.TextChoices):
     FIFA = "FIFA", "FIFA Official API"
     ESPN = "ESPN", "ESPN Sports Data"
+    NFLVERSE = "NFLVERSE", "nflverse Schedule Data"
 
 
 class MatchStatus(models.TextChoices):

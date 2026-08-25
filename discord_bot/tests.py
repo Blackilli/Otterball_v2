@@ -3,6 +3,7 @@ from django.test import TestCase
 from django.utils import timezone
 
 from discord_bot.cogs.reconciliation import ReconciliationCog
+from discord_bot.constants import DISCORD_POLL_ANSWER_ORDER_MAP
 from discord_bot.models import ActiveMatchMessage, DiscordChannel, DiscordGuild, DiscordGuildRole, DiscordProfile
 from predictions.models import Prediction, PredictionPool
 from sports.models import Competition, Match, MatchOutcome, MatchStatus, Season, Stage, StageType, Team
@@ -204,3 +205,52 @@ class ReconcileActivePollsTests(TestCase):
 
         bob_prediction = await Prediction.objects.aget(pool=self.pool, match=self.match, user=self.bob)
         self.assertEqual(bob_prediction.predicted_outcome, MatchOutcome.AWAY_WIN)
+
+
+class PollAnswerOrderMapTests(TestCase):
+    """Covers DISCORD_POLL_ANSWER_ORDER_MAP (discord_bot/constants.py).
+
+    The map is indexed by 1-based Discord poll answer ids (slot 0 is a None
+    placeholder), and both poll_creation and poll_listener read it - creation
+    builds the answers in this order, the listener translates a vote back into
+    a MatchOutcome by the same order. If they ever disagree, every vote is
+    recorded as the wrong outcome, so the two directions are asserted here
+    together.
+
+    A stage type missing from the map makes poll_creation log an error and
+    skip the match entirely, so every stage type a pool can use must be
+    present."""
+
+    def test_league_stages_offer_a_draw(self):
+        """The NFL regular season is a LEAGUE stage and can end in a tie."""
+        order = DISCORD_POLL_ANSWER_ORDER_MAP[StageType.LEAGUE]
+
+        self.assertEqual(order, [None, MatchOutcome.HOME_WIN, MatchOutcome.DRAW, MatchOutcome.AWAY_WIN])
+
+    def test_knockout_stages_offer_no_draw(self):
+        """NFL playoff rounds cannot tie, so the poll has two answers."""
+        order = DISCORD_POLL_ANSWER_ORDER_MAP[StageType.KNOCK_OUT]
+
+        self.assertEqual(order, [None, MatchOutcome.HOME_WIN, MatchOutcome.AWAY_WIN])
+        self.assertNotIn(MatchOutcome.DRAW, order)
+
+    def test_every_stage_type_a_pool_uses_is_mapped(self):
+        """OTHER is deliberately absent - an unclassified stage should fail
+        loudly rather than have a poll layout guessed for it."""
+        for stage_type in (StageType.GROUP, StageType.LEAGUE, StageType.KNOCK_OUT):
+            self.assertIn(stage_type, DISCORD_POLL_ANSWER_ORDER_MAP)
+        self.assertNotIn(StageType.OTHER, DISCORD_POLL_ANSWER_ORDER_MAP)
+
+    def test_answer_ids_are_one_based(self):
+        """Discord answer ids start at 1, so slot 0 must stay a placeholder -
+        poll_listener indexes straight into this list with payload.answer_id."""
+        for stage_type, order in DISCORD_POLL_ANSWER_ORDER_MAP.items():
+            self.assertIsNone(order[0], f"{stage_type} must reserve slot 0")
+            self.assertTrue(all(outcome is not None for outcome in order[1:]))
+
+    def test_home_is_always_the_first_answer_and_away_the_last(self):
+        """poll_creation renders home first and away last; a reordering here
+        would silently swap which team a vote counts for."""
+        for stage_type, order in DISCORD_POLL_ANSWER_ORDER_MAP.items():
+            self.assertEqual(order[1], MatchOutcome.HOME_WIN, f"{stage_type} must lead with the home team")
+            self.assertEqual(order[-1], MatchOutcome.AWAY_WIN, f"{stage_type} must end with the away team")

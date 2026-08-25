@@ -1,0 +1,199 @@
+{
+ "events": [
+  {
+   "id": "401872657",
+   "competitionId": "401872657",
+   "uid": "s:20~l:28~e:401872657~c:401872657",
+   "date": "2026-09-11T00:35:00Z",
+   "timeValid": true,
+   "period": 0,
+   "clock": "0:00",
+   "status": "pre",
+   "summary": "9/10 - 8:35 PM EDT",
+   "percentComplete": 0,
+   "venue": {
+    "fullName": "Melbourne Cricket Ground",
+    "indoor": false
+   },
+   "weather": {
+    "snow": false,
+    "wind": false
+   },
+   "fullStatus": {
+    "clock": 0.0,
+    "displayClock": "0:00",
+    "period": 0,
+    "type": {
+     "id": "1",
+     "name": "STATUS_SCHEDULED",
+     "state": "pre",
+     "completed": false,
+     "description": "Scheduled",
+     "detail": "Thu, September 10th at 8:35 PM EDT",
+     "shortDetail": "9/10 - 8:35 PM EDT"
+    }
+   },
+   "link": "https://www.espn.com/nfl/game/_/gameId/401872657/49ers-rams",
+   "broadcast": "Netflix",
+   "fantasySource": {
+    "id": "0",
+    "description": "none",
+    "state": "none"
+   },
+   "competitors": [
+    {
+     "id": "14",
+     "type": "team",
+     "homeAway": "home",
+     "abbreviation": "LAR",
+     "score": "",
+     "winner": false,
+     "record": "0-0",
+     "name": "Rams",
+     "lineup": []
+    },
+    {
+     "id": "25",
+     "type": "team",
+     "homeAway": "away",
+     "abbreviation": "SF",
+     "score": "",
+     "winner": false,
+     "record": "0-0",
+     "name": "49ers",
+     "lineup": []
+    }
+   ]
+  },
+  {
+   "id": "401872925",
+   "competitionId": "401872925",
+   "uid": "s:20~l:28~e:401872925~c:401872925",
+   "date": "2026-09-13T17:00:00Z",
+   "timeValid": true,
+   "period": 0,
+   "clock": "0:00",
+   "status": "pre",
+   "summary": "9/13 - 1:00 PM EDT",
+   "percentComplete": 0,
+   "venue": {
+    "fullName": "Paycor Stadium",
+    "indoor": false
+   },
+   "weather": {
+    "snow": false,
+    "wind": false
+   },
+   "fullStatus": {
+    "clock": 0.0,
+    "displayClock": "0:00",
+    "period": 0,
+    "type": {
+     "id": "1",
+     "name": "STATUS_SCHEDULED",
+     "state": "pre",
+     "completed": false,
+     "description": "Scheduled",
+     "detail": "Sun, September 13th at 1:00 PM EDT",
+     "shortDetail": "9/13 - 1:00 PM EDT"
+    }
+   },
+   "link": "https://www.espn.com/nfl/game/_/gameId/401872925/buccaneers-bengals",
+   "broadcast": "FOX",
+   "fantasySource": {
+    "id": "0",
+    "description": "none",
+    "state": "none"
+   },
+   "competitors": [
+    {
+     "id": "4",
+     "type": "team",
+     "homeAway": "home",
+     "abbreviation": "CIN",
+     "score": "",
+     "winner": false,
+     "record": "0-0",
+     "name": "Bengals",
+     "lineup": []
+    },
+    {
+     "id": "27",
+     "type": "team",
+     "homeAway": "away",
+     "abbreviation": "TB",
+     "score": "",
+     "winner": false,
+     "record": "0-0",
+     "name": "Buccaneers",
+     "lineup": []
+    }
+   ]
+  },
+  {
+   "id": "401872923",
+   "competitionId": "401872923",
+   "uid": "s:20~l:28~e:401872923~c:401872923",
+   "date": "2026-09-13T17:00:00Z",
+   "timeValid": true,
+   "period": 0,
+   "clock": "0:00",
+   "status": "pre",
+   "summary": "9/13 - 1:00 PM EDT",
+   "percentComplete": 0,
+   "venue": {
+    "fullName": "Ford Field",
+    "indoor": true
+   },
+   "weather": {
+    "snow": false,
+    "wind": false
+   },
+   "fullStatus": {
+    "clock": 0.0,
+    "displayClock": "0:00",
+    "period": 0,
+    "type": {
+     "id": "1",
+     "name": "STATUS_SCHEDULED",
+     "state": "pre",
+     "completed": false,
+     "description": "Scheduled",
+     "detail": "Sun, September 13th at 1:00 PM EDT",
+     "shortDetail": "9/13 - 1:00 PM EDT"
+    }
+   },
+   "link": "https://www.espn.com/nfl/game/_/gameId/401872923/saints-lions",
+   "broadcast": "FOX",
+   "fantasySource": {
+    "id": "0",
+    "description": "none",
+    "state": "none"
+   },
+   "competitors": [
+    {
+     "id": "8",
+     "type": "team",
+     "homeAway": "home",
+     "abbreviation": "DET",
+     "score": "",
+     "winner": false,
+     "record": "0-0",
+     "name": "Lions",
+     "lineup": []
+    },
+    {
+     "id": "18",
+     "type": "team",
+     "homeAway": "away",
+     "abbreviation": "NO",
+     "score": "",
+     "winner": false,
+     "record": "0-0",
+     "name": "Saints",
+     "lineup": []
+    }
+   ]
+  }
+ ]
+}

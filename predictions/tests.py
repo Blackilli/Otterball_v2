@@ -379,16 +379,19 @@ class LeaderboardTests(TestCase):
         self.assertEqual(ranked_by_user["carol"], 2)
         self.assertEqual(ranked_by_user["dave"], 4)
 
-    async def test_users_with_no_predictions_in_the_pool_rank_last_with_zero_points(self):
+    async def test_users_with_no_predictions_in_the_pool_are_not_listed(self):
+        """Non-participants are excluded outright rather than listed on zero.
+
+        They used to be annotated along with everyone else, which is
+        backend-dependent and wrong either way: SQLite sorts the resulting
+        NULLs last, Postgres sorts them first, so in production an unrelated
+        pool's members took the top ranks. See LeaderboardScopingTests."""
         await self.award(self.alice, 10)
 
         leaderboard = [entry async for entry in self.pool.aget_leaderboard()]
         points_by_user = {user.username: points for _rank, user, points in leaderboard}
 
-        self.assertEqual(points_by_user["alice"], 10)
-        self.assertEqual(points_by_user["bob"], 0)
-        self.assertEqual(points_by_user["carol"], 0)
-        self.assertEqual(points_by_user["dave"], 0)
+        self.assertEqual(points_by_user, {"alice": 10})
 
 
 class ExportPointHistoryTests(TestCase):
@@ -499,3 +502,103 @@ class ExportPointHistoryTests(TestCase):
 
         self.assertEqual(rows[0], ["kickoff", "match", "alice"])
         self.assertEqual(rows[1][2:], ["3"])
+
+
+class LeaderboardScopingTests(TestCase):
+    """Covers PredictionPool.aget_user_with_points / aget_leaderboard
+    (predictions/models.py).
+
+    The ranking must be scoped to the pool being ranked. Before this was
+    enforced, every User row in the database got annotated: non-participants
+    came back with total_points = NULL, and Postgres sorts NULLs first on a
+    DESC order, so members of an unrelated pool silently occupied the top
+    ranks and pushed the real players down. The leaderboard cog hides them
+    from the rendered embed but not from the rank numbers, so the visible
+    effect was a leaderboard that started at rank 40 instead of rank 1."""
+
+    def setUp(self):
+        self.competition = Competition.objects.create(name="NFL")
+        self.season = Season.objects.create(name="NFL 2026", competition=self.competition, year=2026)
+        self.stage = Stage.objects.create(season=self.season, name="Regular Season", stage_type=StageType.LEAGUE)
+        self.home_team = Team.objects.create(name="Cleveland Browns")
+        self.away_team = Team.objects.create(name="Minnesota Vikings")
+        self.match = Match.objects.create(
+            stage=self.stage,
+            home_team=self.home_team,
+            away_team=self.away_team,
+            kickoff=timezone.now(),
+            status=MatchStatus.FINISHED,
+            home_score=17,
+            away_score=21,
+        )
+        self.pool = PredictionPool.objects.create(name="NFL Pool", season=self.season)
+        self.other_pool = PredictionPool.objects.create(name="World Cup Pool", season=self.season)
+
+    def make_prediction(self, user, pool, points, outcome=MatchOutcome.AWAY_WIN):
+        return Prediction.objects.create(
+            pool=pool,
+            match=self.match,
+            user=user,
+            predicted_outcome=outcome,
+            points_awarded=points,
+            is_processed=True,
+        )
+
+    async def collect(self, pool):
+        return [(rank, user.username, points) async for rank, user, points in pool.aget_leaderboard()]
+
+    async def test_users_from_another_pool_are_not_ranked(self):
+        player = await User.objects.acreate_user(username="nfl_player")
+        outsider = await User.objects.acreate_user(username="worldcup_only")
+        await User.objects.acreate_user(username="admin_who_never_plays")
+
+        await Prediction.objects.acreate(
+            pool=self.pool, match=self.match, user=player, predicted_outcome=MatchOutcome.AWAY_WIN, points_awarded=3
+        )
+        await Prediction.objects.acreate(
+            pool=self.other_pool,
+            match=self.match,
+            user=outsider,
+            predicted_outcome=MatchOutcome.AWAY_WIN,
+            points_awarded=99,
+        )
+
+        leaderboard = await self.collect(self.pool)
+
+        self.assertEqual(leaderboard, [(1, "nfl_player", 3)])
+
+    async def test_points_are_summed_per_pool_not_across_pools(self):
+        player = await User.objects.acreate_user(username="dual_player")
+        await Prediction.objects.acreate(
+            pool=self.pool, match=self.match, user=player, predicted_outcome=MatchOutcome.AWAY_WIN, points_awarded=3
+        )
+        await Prediction.objects.acreate(
+            pool=self.other_pool,
+            match=self.match,
+            user=player,
+            predicted_outcome=MatchOutcome.AWAY_WIN,
+            points_awarded=50,
+        )
+
+        self.assertEqual(await self.collect(self.pool), [(1, "dual_player", 3)])
+        self.assertEqual(await self.collect(self.other_pool), [(1, "dual_player", 50)])
+
+    async def test_order_is_stable_across_calls(self):
+        """The leaderboard cog diffs a fingerprint of this list to decide
+        whether to edit its Discord message; an unstable order among tied
+        users would make it rewrite the message forever."""
+        for name in ("zoe", "adam", "mia"):
+            user = await User.objects.acreate_user(username=name)
+            await Prediction.objects.acreate(
+                pool=self.pool,
+                match=self.match,
+                user=user,
+                predicted_outcome=MatchOutcome.AWAY_WIN,
+                points_awarded=7,
+            )
+
+        self.assertEqual(await self.collect(self.pool), await self.collect(self.pool))
+
+    async def test_empty_pool_yields_nothing(self):
+        await User.objects.acreate_user(username="bystander")
+        self.assertEqual(await self.collect(self.pool), [])
