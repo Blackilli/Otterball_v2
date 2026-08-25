@@ -33,6 +33,9 @@ uv run python manage.py sync_nfl_infra                       # NFL: full setup f
 uv run python manage.py sync_nfl_infra --season 2026 --sync-upcoming-matches --lookahead-days 25
 uv run python manage.py sync_nfl_infra --sync-live-matches   # pull status/scores for matches that are live or already due
 
+uv run python manage.py create_pool --name "NFL 2026" --sport AMERICAN_FOOTBALL --year 2026   # pool + config + stage rules (idempotent)
+uv run python manage.py check_pool                           # is a pool actually ready? exits non-zero on FAIL
+
 uv run python manage.py export_db [output.json.gz]    # clean full DB export (natural keys, skips contenttypes/permissions/sessions/celery results)
 uv run python manage.py import_db backups/foo.json.gz --flush   # restore a dump; --flush wipes existing rows first to avoid PK conflicts
 ```
@@ -79,17 +82,52 @@ Four Django apps, each with a distinct responsibility:
 
 ## Starting a new pool
 
-The bot is generic over sports; standing up a new pool is mostly data entry in `/admin/` on top of one ingestion run.
+The bot is generic over sports; standing up a pool is one ingestion run plus one command.
 
-For an NFL season:
+```bash
+# 1. Sport data: competition, season, rounds, teams (logos + colours), schedule.
+uv run python manage.py sync_nfl_infra
 
-1. `uv run python manage.py sync_nfl_infra` — creates the `NFL` competition, the season, its five rounds, all 32 franchises (logos + brand colours downloaded to `/media/`), the nflverse abbreviation bridge, and the schedule for the next 14 days, then cross-checks it against nflverse. Idempotent; the Celery task `sync_nfl_infrastructure` does the same thing daily.
-2. In `/admin/`, create a `PredictionPool` on that season. A `PoolConfiguration` is auto-created by a `post_save` signal (defaulting to Sunday) — set `poll_creation_weekdays` and `poll_creation_time` for when polls should go up, and `poll_creation_lookahead_days` (max 7) for how far ahead to cover. An NFL week runs Thursday→Monday, so creating polls on Wednesday with a 7-day lookahead covers a full week in one thread.
-3. Add five `PoolStageRule` rows, one per stage, to scale points by round (e.g. 1/2/3/4/5 from Regular Season to Super Bowl). A row with `stage=None` acts as the pool-wide fallback; the final hardcoded fallback is `3`.
-4. Create a `DiscordGuildPool` linking the pool to a guild + channel, optionally with a notification role. The leaderboard message is created and pinned automatically on the next bot start.
-5. Start the bot. `EmojiSyncCog` registers a Discord application emoji per team from its logo on `on_ready` (32 emoji, well inside the 2000-per-app limit).
+# 2. The pool itself: PredictionPool + PoolConfiguration + one PoolStageRule per round.
+uv run python manage.py create_pool --name "NFL 2026" --sport AMERICAN_FOOTBALL --year 2026 \
+    --weekdays 2 --time 18:00 --lookahead 7 \
+    --points "Regular Season=1,Wild Card=2,Divisional=3,Conference Championship=4,Super Bowl=5"
 
-Note that ESPN's schedule sync only looks forward. To backfill a stretch of season that has already been played, the easiest route is `--sync-nflverse`, which ingests a whole season including finals in one pass; the ESPN equivalent is `ingest_espn_nfl_matches(start=..., end=...)` followed by `ingest_espn_nfl_live_matches()`.
+# 3. Start the bot once. ReconciliationCog creates the DiscordGuild/Channel/Role rows
+#    and EmojiSyncCog registers a team emoji per logo.
+uv run python manage.py runbot
+
+# 4. Bind the pool to a guild + channel (now that step 3 has populated them).
+uv run python manage.py create_pool --name "NFL 2026" --sport AMERICAN_FOOTBALL --year 2026 \
+    --guild <guild_id> --channel <channel_id> --notification-role <role_id>
+
+# 5. Confirm it is actually ready.
+uv run python manage.py check_pool
+```
+
+`create_pool` is idempotent — re-running with the same `--name` and season updates rather than
+duplicating, which is why steps 2 and 4 are the same command. Everything it does is also available
+in `/admin/`: `PredictionPool` carries `PoolConfiguration` and `PoolStageRule` as inlines and seeds
+missing rules on save, and `DiscordGuildPool` is where the guild binding lives.
+
+**The ordering in step 3 is a hard dependency, not a preference.** `DiscordGuild`, `DiscordChannel`
+and `DiscordGuildRole` rows are only created by the bot's `ReconciliationCog` on `on_ready`, so
+until the bot has connected once there is nothing to bind a pool to — the admin dropdowns are empty
+and `create_pool --guild` refuses with a message saying so.
+
+### Why check_pool exists
+
+Almost every way a pool can be misconfigured is silent:
+
+| Misconfiguration | Symptom without the check |
+|---|---|
+| No `PoolStageRule` rows | Every pick scores the hardcoded fallback of `3`; per-round scaling silently doesn't happen |
+| Stage type missing from `DISCORD_POLL_ANSWER_ORDER_MAP` | Poll creation skips every match in that round |
+| No `DiscordGuildPool`, or one with a null channel | The pool never posts anything at all |
+| Empty `poll_creation_weekdays` | Polls never fire |
+| No matches ingested in the lookahead window | Poll creation runs and finds nothing |
+
+`check_pool` reports each as OK/WARN/FAIL and exits non-zero on FAIL, so it also works as a deploy gate.
 
 ### Which NFL provider owns what
 

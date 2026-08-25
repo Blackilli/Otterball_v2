@@ -144,7 +144,7 @@ class PoolStageRule(models.Model):
         related_name="stage_rules",
     )
     stage = models.ForeignKey(Stage, null=True, blank=True, on_delete=models.CASCADE, related_name="stage_rules")
-    level = models.IntegerField()
+    level = models.IntegerField(default=0)
     points_per_correct = models.IntegerField(default=3)
 
     class Meta:
@@ -284,6 +284,42 @@ class Prediction(models.Model):
             f"Comparing prediction {self.id} outcome ({self.predicted_outcome}) to match outcome {self.match.outcome}. Result: {self.predicted_outcome == self.match.outcome}"
         )
         return self.predicted_outcome == self.match.outcome
+
+
+def sync_pool_stage_rules(pool: PredictionPool) -> list["PoolStageRule"]:
+    """Give `pool` a PoolStageRule for every stage of its season.
+
+    Idempotent - only missing rules are created, existing ones are left alone,
+    so this is safe to re-run after a season gains a stage (the NFL playoff
+    rounds only appear once the bracket is known).
+
+    New rules take the model's default points rather than inventing an
+    escalation, so scoring is unchanged from the implicit fallback in
+    predictions/signals.py. The point is that the rules become *visible* and
+    editable: without them every correct pick silently scores the hardcoded
+    fallback, and a pool meant to scale points per round quietly doesn't.
+
+    Deliberately *not* called from the post_save that creates
+    PoolConfiguration. That configuration is one-to-one and cannot collide,
+    but stage rules are many-per-pool with a unique (pool, stage) constraint -
+    seeding them on every save would turn the common
+    `create pool, then add a rule` sequence into an IntegrityError, and would
+    silently invalidate any code that relies on a stage having no rule so the
+    pool-wide fallback applies. Callers ask for it explicitly instead: the
+    admin (PredictionPoolAdmin.save_model) and `manage.py create_pool`.
+    """
+    existing_stage_ids = set(pool.stage_rules.values_list("stage_id", flat=True))
+
+    created = [
+        PoolStageRule(pool=pool, stage=stage, level=stage.level)
+        for stage in Stage.objects.filter(season_id=pool.season_id).order_by("level")
+        if stage.id not in existing_stage_ids
+    ]
+    if created:
+        PoolStageRule.objects.bulk_create(created)
+        logger.info(f"Seeded {len(created)} stage rules for pool {pool.id}")
+
+    return created
 
 
 @receiver(post_save, sender=PredictionPool)

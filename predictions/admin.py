@@ -1,7 +1,14 @@
 from django import forms
 from django.contrib import admin
 
-from predictions.models import DayOfWeek, PoolConfiguration, PoolStageRule, Prediction, PredictionPool
+from predictions.models import (
+    DayOfWeek,
+    PoolConfiguration,
+    PoolStageRule,
+    Prediction,
+    PredictionPool,
+    sync_pool_stage_rules,
+)
 
 # Register your models here.
 
@@ -23,7 +30,11 @@ class PredictionAdmin(admin.ModelAdmin):
 
 @admin.register(PoolStageRule)
 class PoolStageRuleAdmin(admin.ModelAdmin):
-    pass
+    list_display = ("pool", "stage", "level", "points_per_correct")
+    list_filter = ("pool",)
+    list_editable = ("points_per_correct",)
+    list_select_related = ("pool", "stage")
+    ordering = ("pool", "level")
 
 
 class PoolConfigurationAdminForm(forms.ModelForm):
@@ -55,7 +66,33 @@ class PoolConfigurationInline(admin.StackedInline):
     can_delete = False
 
 
+class PoolStageRuleInline(admin.TabularInline):
+    """Scoring shown on the pool page.
+
+    Without a rule per stage, predictions/signals.py falls back to a hardcoded
+    3 points and a pool meant to scale points per round scores every round the
+    same, with nothing logged. Seeding them in save_model makes that visible.
+    """
+
+    model = PoolStageRule
+    extra = 0
+    fields = ("stage", "level", "points_per_correct")
+    ordering = ("level",)
+
+
 @admin.register(PredictionPool)
 class PredictionPoolAdmin(admin.ModelAdmin):
-    inlines = [PoolConfigurationInline]
-    list_display = ("name", "season", "is_active")
+    inlines = [PoolConfigurationInline, PoolStageRuleInline]
+    list_display = ("name", "season", "is_active", "stage_rule_count")
+
+    @admin.display(description="Stage rules")
+    def stage_rule_count(self, pool: PredictionPool) -> int:
+        return pool.stage_rules.count()
+
+    def save_model(self, request, obj, form, change):
+        super().save_model(request, obj, form, change)
+        # Top up on every save, not just creation: a season gains its playoff
+        # stages partway through, and those need rules too.
+        seeded = sync_pool_stage_rules(obj)
+        if seeded:
+            self.message_user(request, f"Seeded {len(seeded)} stage rule(s) - set the points below.")
