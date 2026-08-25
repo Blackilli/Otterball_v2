@@ -16,6 +16,11 @@ class OtterBallBot(commands.Bot):
         intents = discord.Intents.default()
         intents.polls = True
         intents.message_content = False
+        # Privileged, and must also be enabled under "Server Members Intent" in
+        # the Discord developer portal or the bot fails to connect. Without it
+        # a role's membership is invisible, and the pre-kickoff reminder cannot
+        # work out who has not voted yet.
+        intents.members = True
         self.heartbeat_file = pathlib.Path("/tmp/bot_heartbeat")
 
         super().__init__(
@@ -30,6 +35,8 @@ class OtterBallBot(commands.Bot):
         from discord_bot.cogs import (
             ChannelSyncCog,
             LeaderboardSyncCog,
+            MatchTickerCog,
+            NotificationPreferenceCog,
             PollCreationCog,
             PollPredictionCog,
             ReconciliationCog,
@@ -42,7 +49,8 @@ class OtterBallBot(commands.Bot):
         await self.add_cog(ReconciliationCog(self))
         await self.add_cog(PollPredictionCog(self))
         await self.add_cog(RoleSyncCog(self))
-        # await self.add_cog(MatchTickerCog(self))
+        await self.add_cog(MatchTickerCog(self))
+        await self.add_cog(NotificationPreferenceCog(self))
         await self.add_cog(EmojiSyncCog(self))
         await self.add_cog(LeaderboardSyncCog(self))
         await self.add_cog(RemoveGarbageCog(self))

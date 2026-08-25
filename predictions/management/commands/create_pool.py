@@ -5,7 +5,15 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
 from discord_bot.models import DiscordChannel, DiscordGuild, DiscordGuildPool, DiscordGuildRole
-from predictions.models import DayOfWeek, PoolConfiguration, PoolStageRule, PredictionPool, sync_pool_stage_rules
+from predictions.models import (
+    MAX_POLL_LOOKAHEAD_DAYS,
+    MAX_REMINDER_LEAD_MINUTES,
+    DayOfWeek,
+    PoolConfiguration,
+    PoolStageRule,
+    PredictionPool,
+    sync_pool_stage_rules,
+)
 from sports.models import Season, Sport
 
 logger = logging.getLogger(__name__)
@@ -38,7 +46,18 @@ class Command(BaseCommand):
             help="Comma-separated weekdays to post polls on, 0=Monday (e.g. '2' for Wednesday)",
         )
         config.add_argument("--time", default=None, help="Poll creation time, HH:MM (24h, project timezone)")
-        config.add_argument("--lookahead", type=int, default=None, help="Days of matches per batch (1-7)")
+        config.add_argument(
+            "--lookahead",
+            type=int,
+            default=None,
+            help=f"Days of matches per batch (1-{MAX_POLL_LOOKAHEAD_DAYS})",
+        )
+        config.add_argument(
+            "--reminder-lead",
+            type=int,
+            default=None,
+            help="Minutes before kickoff to ping players who have not voted (0 disables the reminder)",
+        )
 
         scoring = parser.add_argument_group("scoring")
         scoring.add_argument(
@@ -159,10 +178,16 @@ class Command(BaseCommand):
             changed.append(f"time={config.poll_creation_time:%H:%M}")
 
         if options["lookahead"] is not None:
-            if not 1 <= options["lookahead"] <= 7:
-                raise CommandError("--lookahead must be between 1 and 7 days.")
+            if not 1 <= options["lookahead"] <= MAX_POLL_LOOKAHEAD_DAYS:
+                raise CommandError(f"--lookahead must be between 1 and {MAX_POLL_LOOKAHEAD_DAYS} days.")
             config.poll_creation_lookahead_days = options["lookahead"]
             changed.append(f"lookahead={config.poll_creation_lookahead_days}d")
+
+        if options["reminder_lead"] is not None:
+            if not 0 <= options["reminder_lead"] <= MAX_REMINDER_LEAD_MINUTES:
+                raise CommandError(f"--reminder-lead must be between 0 and {MAX_REMINDER_LEAD_MINUTES} minutes.")
+            config.reminder_lead_minutes = options["reminder_lead"]
+            changed.append(f"reminder_lead={config.reminder_lead_minutes}min")
 
         if changed:
             config.save()

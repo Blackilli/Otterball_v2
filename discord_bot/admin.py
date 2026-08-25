@@ -8,6 +8,7 @@ from discord_bot.models import (
     DiscordGuildRole,
     DiscordProfile,
     DiscordTeamEmoji,
+    PoolNotificationPreference,
 )
 
 
@@ -74,3 +75,17 @@ class DiscordGuildPoolAdmin(admin.ModelAdmin):
         if db_field.name == "notification_role":
             kwargs["queryset"] = DiscordGuildRole.objects.filter(is_active=True).select_related("guild")
         return super().formfield_for_foreignkey(db_field, request, **kwargs)
+
+
+@admin.register(PoolNotificationPreference)
+class PoolNotificationPreferenceAdmin(admin.ModelAdmin):
+    """Only users who changed the setting have a row here.
+
+    Reminders default to on, so an absent row means "notify" - do not read an
+    empty list as "nobody wants reminders".
+    """
+
+    list_display = ("user", "pool", "notify_missing_votes", "updated_at")
+    list_filter = ("pool", "notify_missing_votes")
+    list_select_related = ("user", "pool")
+    search_fields = ("user__username",)

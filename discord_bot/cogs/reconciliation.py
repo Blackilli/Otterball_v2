@@ -1,22 +1,14 @@
 import logging
 
-import discord
 from discord.ext import commands
 
-from discord_bot.constants import (
-    DISCORD_DRAWABLE_POLL_ANSWER_ORDER,
-    DISCORD_KO_POLL_ANSWER_ORDER,
-    DISCORD_POLL_ANSWER_ORDER_MAP,
-)
 from discord_bot.models import (
     ActiveMatchMessage,
     DiscordChannel,
     DiscordGuild,
     DiscordGuildRole,
-    DiscordProfile,
 )
-from predictions.models import Prediction
-from users.models import User
+from discord_bot.services import aget_discord_profile_cache, sync_predictions_from_poll
 
 logger = logging.getLogger(__name__)
 
@@ -92,12 +84,7 @@ class ReconciliationCog(commands.Cog):
                 ).aupdate(is_active=False)
 
     async def reconcile_active_polls(self):
-        discord_profile_cache = {
-            profile.id: profile
-            async for profile in DiscordProfile.objects.select_related("user")
-            .filter(user__is_active=True)
-            .aiterator()
-        }
+        profile_cache = await aget_discord_profile_cache()
 
         synced_count = 0
 
@@ -106,80 +93,8 @@ class ReconciliationCog(commands.Cog):
             .select_related("match", "match__stage")
             .aiterator()
         ):
-            try:
-                channel = self.bot.get_channel(match_msg.channel_id)
-                if not channel:
-                    channel = await self.bot.fetch_channel(match_msg.channel_id)
-
-                thread = channel.get_thread(match_msg.thread_id)
-                if not thread:
-                    logger.warning(f"Thread not found for match {match_msg.match_id}")
-                    continue
-
-                message = await thread.fetch_message(match_msg.poll_message_id)
-                if not message.poll:
-                    logger.warning(f"Poll not found for match {match_msg.match_id}")
-                    continue
-                answer_order = DISCORD_POLL_ANSWER_ORDER_MAP.get(match_msg.match.stage.stage_type)
-
-                if match_msg.poll_use_fallback_answer_ordering:
-                    # TODO: Fix this fallback
-                    if len(message.poll.answers) == 3:
-                        answer_order = DISCORD_DRAWABLE_POLL_ANSWER_ORDER
-                    elif len(message.poll.answers) == 2:
-                        answer_order = DISCORD_KO_POLL_ANSWER_ORDER
-
-                match_predictions = []
-                for answer in message.poll.answers:
-                    if answer_order is None or len(answer_order) <= answer.id:
-                        logger.error(
-                            f"Invalid poll map for match {match_msg.match_id} in stage {match_msg.match.stage.id}"
-                        )
-                        continue
-                    predicted_outcome = answer_order[answer.id]
-                    if not predicted_outcome:
-                        logger.error(f"Invalid poll answer: {answer.id}")
-                        continue
-
-                    async for voter in answer.voters():
-                        profile = discord_profile_cache.get(voter.id)
-                        if not profile:
-                            logger.info(f"Creating user for Discord ID: {voter.id} ({voter.name})")
-                            user = await User.objects.acreate_user(username=voter.name, is_active=True)
-                            profile = await DiscordProfile.objects.acreate(
-                                user=user,
-                                id=voter.id,
-                                username=voter.name,
-                                global_name=voter.global_name,
-                            )
-                            discord_profile_cache[profile.id] = profile
-                            user_id = user.id
-                        else:
-                            user_id = profile.user_id
-
-                        match_predictions.append((user_id, predicted_outcome))
-            except (discord.NotFound, discord.Forbidden) as e:
-                logger.warning(
-                    f"Skipping poll synchronization for match {match_msg.match_id} due to discord permissions: {e}"
-                )
-                continue
-
-            # Full re-derivation: anyone not currently voting on this match's poll
-            # loses their prediction, so a retraction that happened while the bot
-            # was offline is reflected too, not just additions/changes.
-            voted_user_ids = {user_id for user_id, _ in match_predictions}
-            await Prediction.objects.filter(
-                pool_id=match_msg.pool_id,
-                match_id=match_msg.match_id,
-            ).exclude(user_id__in=voted_user_ids).adelete()
-
-            for user_id, predicted_outcome in match_predictions:
-                await Prediction.objects.aupdate_or_create(
-                    pool_id=match_msg.pool_id,
-                    user_id=user_id,
-                    match_id=match_msg.match_id,
-                    defaults={"predicted_outcome": predicted_outcome},
-                )
-                synced_count += 1
+            written = await sync_predictions_from_poll(self.bot, match_msg, profile_cache)
+            if written > 0:
+                synced_count += written
 
         logger.info(f"Reconciliation complete. Successfully synchronized {synced_count} live votes.")

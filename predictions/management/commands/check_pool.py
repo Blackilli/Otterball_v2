@@ -6,7 +6,7 @@ from django.utils import timezone
 
 from discord_bot.constants import DISCORD_POLL_ANSWER_ORDER_MAP
 from discord_bot.models import DiscordGuildPool, DiscordTeamEmoji
-from predictions.models import DayOfWeek, PredictionPool
+from predictions.models import DEFAULT_POLL_LOOKAHEAD_DAYS, DayOfWeek, PredictionPool
 from sports.models import Match, Stage
 
 OK = "OK"
@@ -176,11 +176,18 @@ class Command(BaseCommand):
             "poll schedule",
             f"{days} at {config.poll_creation_time:%H:%M}, {config.poll_creation_lookahead_days}d lookahead",
         )
+
+        # Not a FAIL: switching the reminder off is a legitimate choice, it is
+        # just an easy one to make by accident and then wonder about.
+        if config.reminder_lead_minutes:
+            self.line(OK, "missing-vote reminder", f"{config.reminder_lead_minutes} min before kickoff")
+        else:
+            self.line(WARN, "missing-vote reminder disabled", "reminder_lead_minutes is 0")
         return OK
 
     def check_matches(self, pool) -> str:
         config = getattr(pool, "configuration", None)
-        lookahead = config.poll_creation_lookahead_days if config else 7
+        lookahead = config.poll_creation_lookahead_days if config else DEFAULT_POLL_LOOKAHEAD_DAYS
         now = timezone.now()
 
         upcoming = Match.objects.filter(
