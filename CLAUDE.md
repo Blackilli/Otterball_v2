@@ -105,6 +105,17 @@ uv run python manage.py create_pool --name "NFL 2026" --sport AMERICAN_FOOTBALL 
 uv run python manage.py check_pool
 ```
 
+Then schedule the ingestion. **Celery Beat is database-driven** (`CELERY_BEAT_SCHEDULER =
+django_celery_beat.schedulers:DatabaseScheduler`), so a task existing in `sports/tasks.py` does
+nothing until a `PeriodicTask` row exists for it in `/admin/django_celery_beat/periodictask/`.
+For the NFL that means three rows:
+
+| Task | Suggested cadence | Does |
+|---|---|---|
+| `sports.tasks.sync_nfl_infrastructure` | daily | season skeleton, teams, abbreviation bridge, schedule |
+| `sports.tasks.sync_nfl_live_games` | every ~2 min | status + scores; this is what transitions a match to `FINISHED` and fires scoring |
+| `sports.tasks.sync_nflverse_results` | a few times a day | independent backstop for finals, plus ESPN id cross-referencing |
+
 `create_pool` is idempotent — re-running with the same `--name` and season updates rather than
 duplicating, which is why steps 2 and 4 are the same command. Everything it does is also available
 in `/admin/`: `PredictionPool` carries `PoolConfiguration` and `PoolStageRule` as inlines and seeds
