@@ -5,23 +5,14 @@ from enum import IntEnum, StrEnum
 from typing import Any, AsyncGenerator
 
 import httpx2
-from aiolimiter import AsyncLimiter
 from httpx2 import Response
 from PIL import Image
 from PIL.ImageFile import ImageFile
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError, field_validator
 
+from sports.integrations.base import RateLimitedAsyncTransport
+
 logger = logging.getLogger(__name__)
-
-
-class RateLimitedAsyncTransport(httpx2.AsyncHTTPTransport):
-    def __init__(self, requests_per_second: float, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.limiter = AsyncLimiter(max_rate=requests_per_second, time_period=1.0)
-
-    async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
-        async with self.limiter:
-            return await super().handle_async_request(request)
 
 
 class Gender(IntEnum):

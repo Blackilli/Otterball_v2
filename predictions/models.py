@@ -8,7 +8,7 @@ from django.contrib.postgres.fields import ArrayField
 from django.core.exceptions import ValidationError
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
-from django.db.models import Q, Sum
+from django.db.models import Count, Q, Sum
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 from django.utils import timezone
@@ -70,14 +70,27 @@ class PredictionPool(models.Model):
         return f"{self.name} (Season ID #{self.season_id})"
 
     async def aget_user_with_points(self) -> AsyncGenerator[tuple[User, int], Any]:
+        # Only users who actually play in *this* pool are ranked. Without the
+        # prediction_count filter every User row is annotated, non-participants
+        # come back with total_points = NULL, and Postgres sorts NULLs first on
+        # a DESC order - so members of an unrelated pool would silently occupy
+        # the top ranks and push this pool's players down.
+        # Ties are broken by id purely so the order is stable: the leaderboard
+        # cog diffs a fingerprint of this list to decide whether to edit its
+        # Discord message, and an unstable order would make it edit forever.
         async for user in (
             User.objects.annotate(
                 total_points=Sum(
                     "predictions__points_awarded",
                     filter=Q(predictions__pool=self),
-                )
+                ),
+                pool_prediction_count=Count(
+                    "predictions",
+                    filter=Q(predictions__pool=self),
+                ),
             )
-            .order_by("-total_points")
+            .filter(pool_prediction_count__gt=0)
+            .order_by("-total_points", "id")
             .aiterator()
         ):
             yield user, (user.total_points or 0)
@@ -131,7 +144,7 @@ class PoolStageRule(models.Model):
         related_name="stage_rules",
     )
     stage = models.ForeignKey(Stage, null=True, blank=True, on_delete=models.CASCADE, related_name="stage_rules")
-    level = models.IntegerField()
+    level = models.IntegerField(default=0)
     points_per_correct = models.IntegerField(default=3)
 
     class Meta:
@@ -271,6 +284,42 @@ class Prediction(models.Model):
             f"Comparing prediction {self.id} outcome ({self.predicted_outcome}) to match outcome {self.match.outcome}. Result: {self.predicted_outcome == self.match.outcome}"
         )
         return self.predicted_outcome == self.match.outcome
+
+
+def sync_pool_stage_rules(pool: PredictionPool) -> list["PoolStageRule"]:
+    """Give `pool` a PoolStageRule for every stage of its season.
+
+    Idempotent - only missing rules are created, existing ones are left alone,
+    so this is safe to re-run after a season gains a stage (the NFL playoff
+    rounds only appear once the bracket is known).
+
+    New rules take the model's default points rather than inventing an
+    escalation, so scoring is unchanged from the implicit fallback in
+    predictions/signals.py. The point is that the rules become *visible* and
+    editable: without them every correct pick silently scores the hardcoded
+    fallback, and a pool meant to scale points per round quietly doesn't.
+
+    Deliberately *not* called from the post_save that creates
+    PoolConfiguration. That configuration is one-to-one and cannot collide,
+    but stage rules are many-per-pool with a unique (pool, stage) constraint -
+    seeding them on every save would turn the common
+    `create pool, then add a rule` sequence into an IntegrityError, and would
+    silently invalidate any code that relies on a stage having no rule so the
+    pool-wide fallback applies. Callers ask for it explicitly instead: the
+    admin (PredictionPoolAdmin.save_model) and `manage.py create_pool`.
+    """
+    existing_stage_ids = set(pool.stage_rules.values_list("stage_id", flat=True))
+
+    created = [
+        PoolStageRule(pool=pool, stage=stage, level=stage.level)
+        for stage in Stage.objects.filter(season_id=pool.season_id).order_by("level")
+        if stage.id not in existing_stage_ids
+    ]
+    if created:
+        PoolStageRule.objects.bulk_create(created)
+        logger.info(f"Seeded {len(created)} stage rules for pool {pool.id}")
+
+    return created
 
 
 @receiver(post_save, sender=PredictionPool)

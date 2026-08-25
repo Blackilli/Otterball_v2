@@ -1,7 +1,14 @@
 from django import forms
 from django.contrib import admin
 
-from predictions.models import DayOfWeek, PoolConfiguration, PoolStageRule, Prediction, PredictionPool
+from predictions.models import (
+    DayOfWeek,
+    PoolConfiguration,
+    PoolStageRule,
+    Prediction,
+    PredictionPool,
+    sync_pool_stage_rules,
+)
 
 # Register your models here.
 
@@ -23,7 +30,11 @@ class PredictionAdmin(admin.ModelAdmin):
 
 @admin.register(PoolStageRule)
 class PoolStageRuleAdmin(admin.ModelAdmin):
-    pass
+    list_display = ("pool", "stage", "level", "points_per_correct")
+    list_filter = ("pool",)
+    list_editable = ("points_per_correct",)
+    list_select_related = ("pool", "stage")
+    ordering = ("pool", "level")
 
 
 class PoolConfigurationAdminForm(forms.ModelForm):
@@ -55,7 +66,45 @@ class PoolConfigurationInline(admin.StackedInline):
     can_delete = False
 
 
+class PoolStageRuleInline(admin.TabularInline):
+    """Scoring shown on the pool page.
+
+    Without a rule per stage, predictions/signals.py falls back to a hardcoded
+    3 points and a pool meant to scale points per round scores every round the
+    same, with nothing logged. Seeding them in save_model makes that visible.
+    """
+
+    model = PoolStageRule
+    extra = 0
+    fields = ("stage", "level", "points_per_correct")
+    ordering = ("level",)
+
+
 @admin.register(PredictionPool)
 class PredictionPoolAdmin(admin.ModelAdmin):
-    inlines = [PoolConfigurationInline]
-    list_display = ("name", "season", "is_active")
+    inlines = [PoolConfigurationInline, PoolStageRuleInline]
+    list_display = ("name", "season", "is_active", "stage_rule_count")
+
+    @admin.display(description="Stage rules")
+    def stage_rule_count(self, pool: PredictionPool) -> int:
+        return pool.stage_rules.count()
+
+    def save_related(self, request, form, formsets, change):
+        """Seed missing stage rules *after* the inlines have been written.
+
+        This has to run here rather than in save_model. Django saves inline
+        formsets in save_related, which runs after save_model - so seeding
+        earlier would insert a rule for a stage the user had just added a row
+        for, and their row would then collide with the unique (pool, stage)
+        constraint and 500 the request. Since sync_pool_stage_rules only
+        creates rules for stages that don't have one, running last lets the
+        user's own rows win and tops up the rest.
+
+        Runs on every save, not just creation: a season gains its playoff
+        stages partway through, and those need rules too.
+        """
+        super().save_related(request, form, formsets, change)
+
+        seeded = sync_pool_stage_rules(form.instance)
+        if seeded:
+            self.message_user(request, f"Seeded {len(seeded)} stage rule(s) - set the points below.")
