@@ -1,10 +1,15 @@
 import datetime
 import json
+import pathlib
+import shutil
+import tempfile
+from io import StringIO
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from django.conf import settings
-from django.test import TestCase
+from django.core.management import call_command
+from django.test import TestCase, override_settings
 from django.utils import timezone
 from PIL import Image
 from pydantic import TypeAdapter
@@ -637,3 +642,78 @@ class IngestUpcomingMatchesUndecidedOpponentTests(TestCase):
         self.assertIsNone(semifinal.home_score)
         self.assertIsNone(semifinal.away_score)
         self.assertIsNone(semifinal.outcome)
+
+
+class PruneTeamLogosTests(TestCase):
+    """Covers `manage.py prune_team_logos`.
+
+    Django never overwrites a file on re-save - it appends a random suffix - so
+    a logo re-downloaded for an unchanged team left the old file behind. The
+    ingestion guard that caused it is fixed; this cleans up what it wrote.
+
+    The command must not delete by default: it removes files off disk, and a
+    referenced-file check that is subtly wrong would take every badge with it.
+    """
+
+    def setUp(self):
+        self.media = tempfile.mkdtemp()
+        logo_dir = pathlib.Path(self.media, "team_logos")
+        logo_dir.mkdir(parents=True)
+        for name in ("kept.png", "orphan_a.png", "orphan_b.png"):
+            pathlib.Path(logo_dir, name).write_bytes(b"x" * 16)
+
+    def tearDown(self):
+        shutil.rmtree(self.media, ignore_errors=True)
+
+    def run_command(self, *args):
+        out = StringIO()
+        with override_settings(MEDIA_ROOT=self.media):
+            call_command("prune_team_logos", *args, stdout=out)
+        return out.getvalue()
+
+    def files_left(self):
+        return sorted(p.name for p in pathlib.Path(self.media, "team_logos").iterdir())
+
+    def test_it_reports_without_deleting_by_default(self):
+        Team.objects.create(name="Chiefs", logo="team_logos/kept.png")
+
+        output = self.run_command()
+
+        self.assertIn("2 orphaned file(s)", output)
+        self.assertIn("Nothing deleted", output)
+        self.assertEqual(self.files_left(), ["kept.png", "orphan_a.png", "orphan_b.png"])
+
+    def test_delete_removes_only_the_unreferenced_files(self):
+        Team.objects.create(name="Chiefs", logo="team_logos/kept.png")
+
+        output = self.run_command("--delete")
+
+        self.assertIn("Deleted 2", output)
+        self.assertEqual(self.files_left(), ["kept.png"])
+
+    def test_a_team_without_a_logo_protects_nothing(self):
+        """An empty ImageField is "" and must not be read as a referenced file."""
+        Team.objects.create(name="Chiefs", logo="team_logos/kept.png")
+        Team.objects.create(name="Eagles")
+
+        self.run_command("--delete")
+
+        self.assertEqual(self.files_left(), ["kept.png"])
+
+    def test_it_flags_a_team_pointing_at_a_missing_file(self):
+        Team.objects.create(name="Chiefs", logo="team_logos/kept.png")
+        Team.objects.create(name="Eagles", logo="team_logos/vanished.png")
+
+        output = self.run_command()
+
+        self.assertIn("point at a file that is gone", output)
+        self.assertIn("team_logos/vanished.png", output)
+
+    def test_nothing_to_do_is_said_plainly(self):
+        Team.objects.create(name="A", logo="team_logos/kept.png")
+        Team.objects.create(name="B", logo="team_logos/orphan_a.png")
+        Team.objects.create(name="C", logo="team_logos/orphan_b.png")
+
+        output = self.run_command()
+
+        self.assertIn("No orphaned logo files", output)

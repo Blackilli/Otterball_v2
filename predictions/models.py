@@ -24,6 +24,29 @@ if TYPE_CHECKING:
     from users.models import User
 
 
+# How long before kickoff MatchTickerCog posts its "last call" reminder, when a
+# pool has not been given its own value. Lives here rather than in the cog so
+# the field default and the cog's fallback cannot drift apart.
+DEFAULT_REMINDER_LEAD_MINUTES = 60
+
+# A week. Past this the reminder would fire before the poll it is reminding
+# people about is likely to exist at all.
+MAX_REMINDER_LEAD_MINUTES = 7 * 24 * 60
+
+# How far ahead one poll batch may reach. The ceiling is Discord's own maximum
+# poll duration - "Number of hours the poll should be open for, up to 32 days"
+# (https://docs.discord.com/developers/resources/poll) - because a poll runs
+# from creation until its match kicks off, so a lookahead longer than that
+# would ask Discord for a poll it refuses to open. It used to be 7 days, which
+# was Discord's original limit before they raised it.
+MAX_POLL_LOOKAHEAD_DAYS = 32
+
+# Unchanged when the cap went up: a week of matches per batch is the cadence
+# pools actually run on, and raising it retroactively would front-load a
+# month of polls into channels that expect seven days of them.
+DEFAULT_POLL_LOOKAHEAD_DAYS = 7
+
+
 class DayOfWeek(models.IntegerChoices):
     MONDAY = 0, "Monday"
     TUESDAY = 1, "Tuesday"
@@ -128,9 +151,20 @@ class PoolConfiguration(models.Model):
         help_text="Time when the polls should be created",
     )
     poll_creation_lookahead_days = models.IntegerField(
-        default=7,
-        validators=[MinValueValidator(1), MaxValueValidator(7)],
-        help_text="Number of days to look ahead for matches (Strictly 1 to 7 days)",
+        default=DEFAULT_POLL_LOOKAHEAD_DAYS,
+        validators=[MinValueValidator(1), MaxValueValidator(MAX_POLL_LOOKAHEAD_DAYS)],
+        help_text=(
+            "Number of days of matches to put in one poll batch "
+            "(1 to {max}, capped by Discord's maximum poll duration)"
+        ).format(max=MAX_POLL_LOOKAHEAD_DAYS),
+    )
+    reminder_lead_minutes = models.PositiveIntegerField(
+        default=DEFAULT_REMINDER_LEAD_MINUTES,
+        validators=[MaxValueValidator(MAX_REMINDER_LEAD_MINUTES)],
+        help_text=(
+            "How many minutes before kickoff the 'you haven't voted yet' reminder is posted. "
+            "0 turns the reminder off for this pool."
+        ),
     )
 
     def __str__(self):

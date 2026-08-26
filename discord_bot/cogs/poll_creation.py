@@ -10,7 +10,7 @@ from django.utils import timezone
 
 from discord_bot.constants import DISCORD_POLL_ANSWER_ORDER_MAP
 from discord_bot.models import ActiveMatchMessage, DiscordGuildPool, DiscordTeamEmoji
-from predictions.models import PoolConfiguration
+from predictions.models import MAX_POLL_LOOKAHEAD_DAYS, PoolConfiguration
 from sports.models import Match, MatchOutcome
 
 logger = logging.getLogger(__name__)
@@ -110,7 +110,10 @@ class PollCreationCog(commands.Cog):
             if not isinstance(channel, discord.abc.Messageable):
                 continue
 
-            effective_lookahead_days = min(pool_config.poll_creation_lookahead_days, 7)
+            # Belt and braces over the field validator: a poll runs until its
+            # match kicks off, so a lookahead past Discord's maximum poll
+            # duration would make it reject every poll in the batch.
+            effective_lookahead_days = min(pool_config.poll_creation_lookahead_days, MAX_POLL_LOOKAHEAD_DAYS)
             lookahead_limit = local_now + datetime.timedelta(days=effective_lookahead_days)
 
             notification_role_id = guild_pool.notification_role_id
@@ -144,24 +147,16 @@ class PollCreationCog(commands.Cog):
                 e.team_id: e async for e in DiscordTeamEmoji.objects.filter(team_id__in=team_ids).aiterator()
             }
 
-            logger.info(f"Found {len(upcoming_matches)} upcoming matches @{notification_role.mention}.")
-            thread_start_message = (
-                f"The new polls are ready! {notification_role.mention if notification_role else ''}"
-            )
-            logger.info(f"Sending thread start message: {thread_start_message}")
-            logger.info(f"first match: {upcoming_matches[0].home_team} vs. {upcoming_matches[0].away_team}")
-            # return
+            logger.info(f"Found {len(upcoming_matches)} upcoming matches.")
+            announcement = f"The new polls are ready! {notification_role.mention if notification_role else ''}"
+            first_kickoff = upcoming_matches[0].kickoff.strftime("%Y-%m-%d")
+            last_kickoff = upcoming_matches[-1].kickoff.strftime("%Y-%m-%d")
+            announcement += f"\n-# Matches from {first_kickoff} to {last_kickoff}"
+
             try:
-                thread_start_msg = await channel.send(thread_start_message)
-                thread_name = f"Polls {upcoming_matches[0].kickoff.strftime('%Y-%m-%d')} - {upcoming_matches[-1].kickoff.strftime('%Y-%m-%d')}"
-                logger.info(f"Creating thread: {thread_name}")
-                thread = await thread_start_msg.create_thread(
-                    name=thread_name,
-                    auto_archive_duration=10080,
-                )
-            except Exception as e:
-                logger.error(f"Error creating thread: {e}")
-                continue
+                await channel.send(announcement)
+            except discord.DiscordException as e:
+                logger.error(f"Error announcing new polls in channel {channel.id}: {e}")
 
             try:
                 for match in upcoming_matches:
@@ -205,19 +200,24 @@ class PollCreationCog(commands.Cog):
                                 continue
                     logger.info(f"Poll created: {poll}")
                     logger.info(content)
-                    poll_msg = await thread.send(content=content, poll=poll)
-                    logger.info(f"Poll message created: {poll_msg}")
+                    poll_msg = await channel.send(content=content, poll=poll)
+                    logger.info(f"Poll message created: {poll_msg.id}")
                     await ActiveMatchMessage.objects.acreate(
                         match=match,
                         guild_id=guild_pool.guild_id,
                         pool_id=guild_pool.pool_id,
                         channel_id=channel.id,
-                        thread_id=thread.id,
                         poll_message_id=poll_msg.id,
                     )
+                    # Pinned so the open polls stay reachable in a busy channel;
+                    # MatchTickerCog unpins each one at kickoff, which is what
+                    # keeps this under Discord's 50-pin ceiling.
+                    try:
+                        await poll_msg.pin(reason="Open prediction poll")
+                    except discord.DiscordException as e:
+                        logger.warning(f"Failed to pin poll message {poll_msg.id}: {e}")
             except Exception as e:
+                # Whatever was posted before the failure is already tracked in
+                # ActiveMatchMessage, so the next run picks up only the
+                # remaining matches - nothing to unwind here.
                 logger.error(f"Error executing poll generation context: {e}")
-                try:
-                    await thread.delete()
-                except Exception:
-                    pass

@@ -133,10 +133,10 @@ async def ingest_fifa_national_teams(sport: Sport = Sport.SOCCER):
 
                 db_team = team_mapping.team if team_mapping else Team(sport=sport)
 
-                metadata_chaned = db_team.name != team_name or db_team.gender != target_gender
+                metadata_changed = db_team.name != team_name or db_team.gender != target_gender
                 logo_changed = is_new or db_team.logo_url != logo_url
 
-                if not (is_new or metadata_chaned or logo_changed):
+                if not (is_new or metadata_changed or logo_changed):
                     logger.debug(f"Team {db_team.name} has no data modifications, skipping.")
                     continue
 
@@ -149,7 +149,11 @@ async def ingest_fifa_national_teams(sport: Sport = Sport.SOCCER):
                 db_team.logo_url = logo_url
                 db_team.gender = target_gender
 
-                if logo_url and logo_url:
+                # `logo_changed`, not `logo_url` twice: re-saving an unchanged
+                # logo does not overwrite the old file, it writes a new one with
+                # a random suffix appended, so every unrelated metadata edit used
+                # to leave another orphan behind in team_logos/.
+                if logo_url and logo_changed:
                     image_response: ImageFile | None = await client.get_picture_by_url(logo_url)
                     if image_response:
                         try:
