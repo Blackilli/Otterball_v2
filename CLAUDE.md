@@ -36,6 +36,9 @@ uv run python manage.py sync_nfl_infra --sync-live-matches   # pull status/score
 uv run python manage.py create_pool --name "NFL 2026" --sport AMERICAN_FOOTBALL --year 2026   # pool + config + stage rules (idempotent)
 uv run python manage.py check_pool                           # is a pool actually ready? exits non-zero on FAIL
 
+uv run python manage.py prune_team_logos                      # report team logo files no Team row points at
+uv run python manage.py prune_team_logos --delete            # actually remove them
+
 uv run python manage.py export_db [output.json.gz]    # clean full DB export (natural keys, skips contenttypes/permissions/sessions/celery results)
 uv run python manage.py import_db backups/foo.json.gz --flush   # restore a dump; --flush wipes existing rows first to avoid PK conflicts
 ```
@@ -67,6 +70,7 @@ Four Django apps, each with a distinct responsibility:
 
 ### Conventions worth knowing
 
+- Django's `FileField.save()` **never overwrites** - on a name collision it appends a random suffix and writes a second file. `ingest_national_teams` used to re-download a logo whenever any unrelated metadata changed (the guard read `if logo_url and logo_url:` instead of `logo_changed`), so `media/team_logos/` accumulated one orphan per team: 1148 files for 574 teams. The guard is fixed in both the FIFA and NFL paths; `manage.py prune_team_logos` clears what it already wrote and reports rows pointing at a file that is gone.
 - `poll_creation_lookahead_days` (how many days of matches go into one poll batch) is capped at `MAX_POLL_LOOKAHEAD_DAYS = 32`, and that number is **Discord's maximum poll duration**, not a project preference — a poll runs from creation until its match kicks off, so a longer batch would ask Discord for a poll it refuses to open ("Number of hours the poll should be open for, up to 32 days"). It was 7 for a long time because that was Discord's original limit. The **default is still 7**: a week per batch is the cadence pools actually run on, and raising the cap deliberately did not touch existing rows.
 - The bot needs the **privileged members intent** (`intents.members = True` in `discord_bot/bot.py`, plus "Server Members Intent" enabled in the Discord developer portal, or login fails outright). It is what makes a notification role's membership visible; without it `role.members` is empty and the pre-kickoff reminder cannot tell who has not voted, so it posts without names rather than failing.
 - Who gets reminded is `notification role members − users with a prediction − users who muted that pool`. A role member with **no `DiscordProfile` has never voted anywhere and still counts as missing**, which is why the set is built from the role and not from the profile table. A first vote from someone with no `DiscordProfile` now creates one (`services.py::aget_or_create_user_id`, via `PollPredictionCog._aresolve_user_id`) rather than being dropped until the next full sync — without it a first-time voter stayed named on the very reminder they had just answered. Users mute themselves per pool with the `/notifications` slash command (`discord_bot/cogs/notification_prefs.py`), which infers the pool from the channel it is used in and only asks for the `pool` option in a guild running several, or with the **Mute reminders** button on the reminder itself. Both go through `services.py::aset_missing_vote_reminders` so they cannot disagree about what muting means.
