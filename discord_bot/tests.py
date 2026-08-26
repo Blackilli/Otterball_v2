@@ -8,6 +8,7 @@ from django.utils import timezone
 from discord_bot.cogs.match_ticker import MatchTickerCog
 from discord_bot.cogs.reconciliation import ReconciliationCog
 from discord_bot.cogs.remove_garbage import RemoveGarbageCog
+from discord_bot.components import FIGURE_SPACE, HALF_DIGIT, MuteRemindersButton
 from discord_bot.constants import DISCORD_POLL_ANSWER_ORDER_MAP
 from discord_bot.models import (
     ActiveMatchMessage,
@@ -19,10 +20,19 @@ from discord_bot.models import (
     MatchMessageState,
     PoolNotificationPreference,
 )
+from discord_bot.services import aset_missing_vote_reminders
 from predictions.models import DEFAULT_REMINDER_LEAD_MINUTES, PoolConfiguration, Prediction, PredictionPool
 from sports.models import Competition, Match, MatchOutcome, MatchStatus, Season, Stage, StageType, Team
 
 User = get_user_model()
+
+# Discord component type ids (Components V2).
+COMPONENT_BUTTON = 2
+COMPONENT_SECTION = 9
+COMPONENT_TEXT_DISPLAY = 10
+COMPONENT_THUMBNAIL = 11
+COMPONENT_SEPARATOR = 14
+COMPONENT_CONTAINER = 17
 
 
 class FakeVoter:
@@ -81,10 +91,11 @@ class FakeRole:
 
 
 class FakeMember:
-    def __init__(self, member_id, name="member", is_bot=False):
+    def __init__(self, member_id, name="member", is_bot=False, global_name=None):
         self.id = member_id
         self.name = name
         self.bot = is_bot
+        self.global_name = global_name
 
     @property
     def mention(self):
@@ -522,6 +533,24 @@ class MissingVoterMentionTests(TestCase):
         self.assertEqual(await cog._missing_voter_mentions(self.match_msg), [])
 
 
+def walk_components(view):
+    """Every component in a LayoutView's payload, accessories and children included."""
+
+    def _walk(components):
+        for component in components:
+            yield component
+            yield from _walk(component.get("components", []))
+            accessory = component.get("accessory")
+            if accessory:
+                yield accessory
+
+    return list(_walk(view.to_components()))
+
+
+def text_of(view):
+    return [c["content"] for c in walk_components(view) if c["type"] == COMPONENT_TEXT_DISPLAY]
+
+
 class FakeSentMessage:
     def __init__(self, message_id, **kwargs):
         self.id = message_id
@@ -594,12 +623,12 @@ class RecordingChannel(discord.abc.Messageable):
             raise discord.NotFound(_FakeResponse(), "unknown message")
         return self.messages[message_id]
 
-    async def send(self, content=None, embeds=None, allowed_mentions=None, reference=None, **kwargs):
+    async def send(self, content=None, view=None, allowed_mentions=None, reference=None, **kwargs):
         self._next_id += 1
         message = FakeSentMessage(
             self._next_id,
             content=content,
-            embeds=embeds or [],
+            view=view,
             allowed_mentions=allowed_mentions,
             reference=reference,
         )
@@ -676,9 +705,9 @@ class StateMessageLifecycleTests(TestCase):
         self.assertEqual(prediction.predicted_outcome, MatchOutcome.HOME_WIN)
 
         self.assertEqual(len(channel.sent), 1)
-        embed = channel.sent[0].kwargs["embeds"][0]
-        self.assertIn("24", embed.description)
-        self.assertIn("<@111>", embed.fields[0].value)
+        texts = " ".join(text_of(channel.sent[0].kwargs["view"]))
+        self.assertIn("24", texts)
+        self.assertIn("<@111>", texts)
 
     async def test_a_second_pass_does_not_repost_the_result(self):
         poll = FakeClosablePoll(answers=[FakePollAnswer(answer_id=1, voter_ids=[111])])
@@ -720,8 +749,7 @@ class StateMessageLifecycleTests(TestCase):
         self.assertTrue(stored.is_poll_finalized)
         self.assertEqual(stored.ticker_state, MatchMessageState.RESULT_POSTED)
 
-        embed = channel.sent[0].kwargs["embeds"][0]
-        self.assertIn("Cancelled", embed.title)
+        self.assertIn("Cancelled", " ".join(text_of(channel.sent[0].kwargs["view"])))
 
     async def test_a_score_change_edits_the_status_message_instead_of_reposting(self):
         await Match.objects.filter(id=self.match.id).aupdate(
@@ -753,7 +781,7 @@ class StateMessageLifecycleTests(TestCase):
 
         self.assertEqual(len(channel.sent), 1)
         self.assertEqual(len(status_message.edits), 1)
-        self.assertIn("14", status_message.edits[0]["embeds"][0].description)
+        self.assertIn("14", " ".join(text_of(status_message.edits[0]["view"])))
 
 
 class FakeSystemMessage:
@@ -891,3 +919,385 @@ class ReminderWindowTests(TestCase):
         await PoolConfiguration.objects.filter(pool_id=other_pool.id).aupdate(reminder_lead_minutes=600)
 
         self.assertEqual(await MatchTickerCog._widest_reminder_window(), datetime.timedelta(minutes=30))
+
+
+class MatchStatusViewTests(TestCase):
+    """Covers the Components V2 scoreboard on the status message.
+
+    Assertions run against `view.to_components()` - the payload Discord
+    actually receives - rather than against the Python objects, so a change in
+    how discord.py builds the tree cannot quietly pass.
+
+    Both badges show, one per Section, because a Section carries exactly one
+    accessory. Discord offers no way to tint or dim an image, so which side is
+    ahead has to be carried by the text beside the badge.
+    """
+
+    def setUp(self):
+        self.competition = Competition.objects.create(name="NFL")
+        self.season = Season.objects.create(name="NFL 2026", competition=self.competition, year=2026)
+        self.stage = Stage.objects.create(season=self.season, name="Regular Season", stage_type=StageType.LEAGUE)
+        self.home = Team.objects.create(
+            name="Chiefs", color="#e31837", logo_url="https://a.espncdn.com/i/teamlogos/nfl/500/kc.png"
+        )
+        self.away = Team.objects.create(
+            name="Eagles", color="#004c54", logo_url="https://a.espncdn.com/i/teamlogos/nfl/500/phi.png"
+        )
+        self.match = Match.objects.create(
+            stage=self.stage,
+            home_team=self.home,
+            away_team=self.away,
+            kickoff=timezone.now(),
+            status=MatchStatus.LIVE,
+        )
+        self.cog = MatchTickerCog(bot=FakeBot())
+
+    def live_view(self, home_score, away_score, status=MatchStatus.LIVE):
+        self.match.home_score = home_score
+        self.match.away_score = away_score
+        self.match.status = status
+        if status == MatchStatus.FINISHED:
+            return self.cog._scoreline_view(self.match, heading="### 🏁 Full time", footer="ft")
+        return self.cog._render_live(self.match)
+
+    def thumbnails_of(self, view):
+        return [c["media"]["url"] for c in walk_components(view) if c["type"] == COMPONENT_THUMBNAIL]
+
+    def accent_of(self, view):
+        container = next(c for c in walk_components(view) if c["type"] == COMPONENT_CONTAINER)
+        return container["accent_color"]
+
+    def test_both_badges_are_shown_home_first(self):
+        view = self.live_view(21, 7)
+
+        self.assertEqual(self.thumbnails_of(view), [self.home.logo_url, self.away.logo_url])
+
+    def test_the_leader_is_bold_and_the_trailer_is_not(self):
+        texts = text_of(self.live_view(21, 7))
+
+        self.assertIn("## **Chiefs**", texts)
+        self.assertIn("## Eagles", texts)
+        self.assertEqual(self.accent_of(self.live_view(21, 7)), discord.Color.from_str(self.home.color).value)
+
+    def test_the_emphasis_and_the_colour_swing_together_with_the_lead(self):
+        view = self.live_view(7, 21)
+        texts = text_of(view)
+
+        self.assertIn("## **Eagles**", texts)
+        self.assertIn("## Chiefs", texts)
+        self.assertEqual(self.accent_of(view), discord.Color.from_str(self.away.color).value)
+        # Order never changes, so the scoreboard does not shift under the reader.
+        self.assertEqual(self.thumbnails_of(view), [self.home.logo_url, self.away.logo_url])
+
+    def test_a_tie_marks_nobody(self):
+        """NFL regular season games really can tie, and 0-0 is every game's first minute."""
+        for home_score, away_score in ((14, 14), (0, 0)):
+            texts = text_of(self.live_view(home_score, away_score))
+            # Neither side is emphasised, because neither is ahead.
+            self.assertNotIn("**", " ".join(texts), f"{home_score}-{away_score} has no leader")
+            self.assertIn("## Chiefs", texts)
+            self.assertIn("## Eagles", texts)
+
+    def test_only_full_time_carries_a_marker(self):
+        """A leader mid-match is bold; a winner gets the trophy as well."""
+        final = text_of(self.live_view(17, 24, status=MatchStatus.FINISHED))
+        self.assertIn("## **Eagles** 🏆", final)
+
+        live = text_of(self.live_view(17, 24))
+        self.assertIn("## **Eagles**", live)
+        self.assertNotIn("🏆", " ".join(live))
+
+    def test_the_name_heads_the_row_and_the_score_sits_under_it(self):
+        """`#` is the largest text Discord renders, so the score takes it."""
+        texts = text_of(self.live_view(17, 10))
+
+        self.assertIn("## **Chiefs**", texts)
+        self.assertIn(f"# {FIGURE_SPACE * 2}17", texts)
+        self.assertIn(f"# {FIGURE_SPACE * 2}10", texts)
+
+    def test_an_unplayed_match_shows_a_dash_where_the_score_goes(self):
+        """Same two-line shape before kickoff as during the match.
+
+        Never a zero: an unplayed game is not 0-0, and rendering it as one
+        would read as a result - the same reason ingestion keeps an empty
+        score as None rather than coercing it.
+        """
+        texts = text_of(self.live_view(None, None))
+
+        self.assertIn("## Chiefs", texts)
+        self.assertIn(f"# {FIGURE_SPACE * 2}–", texts)
+        self.assertEqual(len([t for t in texts if t.startswith("# ")]), 2)
+        self.assertNotIn(f"# {FIGURE_SPACE * 2}0", texts)
+
+    def test_a_missing_score_beside_a_real_one_is_still_lined_up(self):
+        texts = text_of(self.live_view(24, None))
+
+        self.assertIn(f"# {FIGURE_SPACE * 2}24", texts)
+        self.assertIn(f"# {FIGURE_SPACE * 2}{HALF_DIGIT}–", texts)
+
+    def test_a_team_without_a_logo_drops_to_plain_text_without_losing_the_other(self):
+        self.home.logo_url = None
+
+        view = self.live_view(21, 7)
+
+        # A Section requires an accessory, so the badge-less side cannot be one -
+        # but the other side keeps its Section and its badge.
+        self.assertEqual(self.thumbnails_of(view), [self.away.logo_url])
+        self.assertIn("## **Chiefs**", text_of(view))
+
+    def test_an_unparseable_colour_falls_back_without_losing_the_badges(self):
+        self.home.color = "not a colour"
+
+        view = self.live_view(21, 7)
+
+        self.assertEqual(self.accent_of(view), discord.Color.blurple().value)
+        self.assertEqual(len(self.thumbnails_of(view)), 2)
+
+    def test_a_divider_sits_under_the_status_line(self):
+        """Every state gets it, so the heading reads as a header not a first line."""
+        for view in (self.live_view(17, 10), self.live_view(None, None)):
+            types = [c["type"] for c in walk_components(view)]
+            self.assertIn(COMPONENT_SEPARATOR, types)
+            # The first thing after the container's heading, not just somewhere.
+            container = next(c for c in walk_components(view) if c["type"] == COMPONENT_CONTAINER)
+            kinds = [child["type"] for child in container["components"]]
+            self.assertEqual(kinds[:2], [COMPONENT_TEXT_DISPLAY, COMPONENT_SEPARATOR])
+
+    def test_a_single_digit_score_is_nudged_onto_the_same_axis(self):
+        """7 next to 24 would otherwise sit half a digit to the left.
+
+        There is no half-figure-space character, so a quarter em stands in as
+        the closest standard width to half a digit.
+        """
+        texts = text_of(self.live_view(24, 7))
+
+        self.assertIn(f"# {FIGURE_SPACE * 2}24", texts)
+        self.assertIn(f"# {FIGURE_SPACE * 2}{HALF_DIGIT}7", texts)
+
+    def test_two_scores_of_equal_width_get_no_nudge(self):
+        for home_score, away_score in ((17, 24), (7, 3)):
+            texts = text_of(self.live_view(home_score, away_score))
+            self.assertNotIn(HALF_DIGIT, " ".join(texts), f"{home_score}-{away_score} needs no nudge")
+
+    def test_it_stays_inside_discords_component_and_character_budget(self):
+        """40 components and 4000 characters of text per message, per the API docs.
+
+        Checked on the widest layout - full time, with two team sections and a
+        capped winner list.
+        """
+        self.match.home_score, self.match.away_score = 17, 24
+        self.match.status = MatchStatus.FINISHED
+        view = self.cog._scoreline_view(
+            self.match,
+            heading="### 🏁 Full time",
+            footer="Leaderboard updates within a minute",
+            detail="**🎯 Called it (40)**\n" + " ".join(f"<@{n}>" for n in range(40)),
+        )
+
+        self.assertLess(len(walk_components(view)), 40)
+        self.assertLess(sum(len(t) for t in text_of(view)), 4000)
+
+
+class MuteButtonTests(TestCase):
+    """Covers the Mute button on the pre-kickoff reminder.
+
+    It is a DynamicItem: the pool id travels in the custom_id and is parsed
+    back out on click, which is what lets a button posted before the last
+    restart still work. If the template and the emitted custom_id ever stop
+    agreeing, every button silently becomes inert, so both directions are
+    asserted here together.
+    """
+
+    def setUp(self):
+        self.competition = Competition.objects.create(name="NFL")
+        self.season = Season.objects.create(name="NFL 2026", competition=self.competition, year=2026)
+        self.stage = Stage.objects.create(season=self.season, name="Regular Season", stage_type=StageType.LEAGUE)
+        self.match = Match.objects.create(
+            stage=self.stage,
+            home_team=Team.objects.create(name="Chiefs", logo_url="https://example.invalid/kc.png"),
+            away_team=Team.objects.create(name="Eagles"),
+            kickoff=timezone.now() + datetime.timedelta(minutes=30),
+        )
+        self.pool = PredictionPool.objects.create(name="NFL 2026", season=self.season)
+        self.guild = DiscordGuild.objects.create(id=1, name="Test Guild")
+        self.channel = DiscordChannel.objects.create(id=10, guild=self.guild, name="general", channel_type="text")
+        self.role = DiscordGuildRole.objects.create(id=77, guild=self.guild, name="Pickers")
+        DiscordGuildPool.objects.create(
+            guild=self.guild, pool=self.pool, channel=self.channel, notification_role=self.role
+        )
+        self.match_msg = ActiveMatchMessage.objects.create(
+            match=self.match, guild=self.guild, pool=self.pool, channel=self.channel, poll_message_id=30
+        )
+
+    def make_cog(self, members):
+        role = FakeRole(role_id=self.role.id, name="Pickers", members=members)
+        guild = FakeGuild(guild_id=self.guild.id, name="Test Guild", roles=[role])
+        return MatchTickerCog(bot=FakeBot(guilds=[guild]))
+
+    def buttons_in(self, view):
+        return [c for c in walk_components(view) if c["type"] == COMPONENT_BUTTON]
+
+    async def test_the_reminder_carries_a_mute_button_for_its_own_pool(self):
+        cog = self.make_cog([FakeMember(222)])
+        active_msg = await ActiveMatchMessage.objects.select_related(
+            "match", "match__stage", "match__home_team", "match__away_team"
+        ).aget(poll_message_id=30)
+
+        mentions = await cog._missing_voter_mentions(active_msg)
+        view, allowed_mentions = cog._render_starting_soon(active_msg, mentions)
+
+        buttons = self.buttons_in(view)
+        self.assertEqual(len(buttons), 1)
+        self.assertEqual(buttons[0]["custom_id"], f"otterball:mute:{self.pool.id}")
+        self.assertIn("<@222>", " ".join(text_of(view)))
+        # Mentions only notify when the allowed-mentions object permits it.
+        self.assertTrue(allowed_mentions.users)
+
+    async def test_no_button_when_nobody_is_being_pinged(self):
+        """With no one to ping there is no ping to opt out of."""
+        cog = self.make_cog([])
+        active_msg = await ActiveMatchMessage.objects.select_related(
+            "match", "match__stage", "match__home_team", "match__away_team"
+        ).aget(poll_message_id=30)
+
+        mentions = await cog._missing_voter_mentions(active_msg)
+        view, allowed_mentions = cog._render_starting_soon(active_msg, mentions)
+
+        self.assertEqual(self.buttons_in(view), [])
+        self.assertIsNone(allowed_mentions)
+
+    def test_the_custom_id_round_trips_through_the_dynamic_template(self):
+        button = MuteRemindersButton(self.pool.id)
+        custom_id = button.item.custom_id
+
+        parsed = MuteRemindersButton.__discord_ui_compiled_template__.fullmatch(custom_id)
+
+        self.assertIsNotNone(parsed, "the emitted custom_id must match the template that dispatches it")
+        self.assertEqual(int(parsed["pool_id"]), self.pool.id)
+
+    async def test_muting_writes_the_preference_for_that_pool_only(self):
+        other_season = await Season.objects.acreate(name="NFL 2025", competition=self.competition, year=2025)
+        other_pool = await PredictionPool.objects.acreate(name="NFL 2025", season=other_season)
+        user = await User.objects.acreate_user(username="clicker")
+        await DiscordProfile.objects.acreate(id=555, user=user, username="clicker")
+
+        await aset_missing_vote_reminders(FakeMember(555, name="clicker"), self.pool.id, enabled=False)
+
+        self.assertEqual(await PoolNotificationPreference.aget_muted_user_ids(self.pool.id), {user.id})
+        self.assertEqual(await PoolNotificationPreference.aget_muted_user_ids(other_pool.id), set())
+
+    async def test_clicking_mute_creates_an_account_for_a_user_who_never_voted(self):
+        await aset_missing_vote_reminders(FakeMember(999, name="newcomer"), self.pool.id, enabled=False)
+
+        profile = await DiscordProfile.objects.aget(id=999)
+        self.assertEqual(await PoolNotificationPreference.aget_muted_user_ids(self.pool.id), {profile.user_id})
+
+
+class ReminderStaysInSyncTests(TestCase):
+    """Covers the reminder tracking votes as they land.
+
+    The score does not move while the reminder is up, so unless the missing
+    voters are part of the render fingerprint the message keeps naming people
+    who have since voted. Nobody added back is notified - the message is
+    edited, and an edit never pings.
+    """
+
+    def setUp(self):
+        self.competition = Competition.objects.create(name="NFL")
+        self.season = Season.objects.create(name="NFL 2026", competition=self.competition, year=2026)
+        self.stage = Stage.objects.create(season=self.season, name="Regular Season", stage_type=StageType.LEAGUE)
+        self.match = Match.objects.create(
+            stage=self.stage,
+            home_team=Team.objects.create(name="Chiefs", logo_url="https://example.invalid/kc.png"),
+            away_team=Team.objects.create(name="Eagles", logo_url="https://example.invalid/phi.png"),
+            kickoff=timezone.now() + datetime.timedelta(minutes=30),
+        )
+        self.pool = PredictionPool.objects.create(name="NFL 2026", season=self.season)
+        self.guild = DiscordGuild.objects.create(id=1, name="Test Guild")
+        self.channel = DiscordChannel.objects.create(id=10, guild=self.guild, name="general", channel_type="text")
+        self.role = DiscordGuildRole.objects.create(id=77, guild=self.guild, name="Pickers")
+        DiscordGuildPool.objects.create(
+            guild=self.guild, pool=self.pool, channel=self.channel, notification_role=self.role
+        )
+        ActiveMatchMessage.objects.create(
+            match=self.match, guild=self.guild, pool=self.pool, channel=self.channel, poll_message_id=30
+        )
+        self.voter = User.objects.create_user(username="voter")
+        DiscordProfile.objects.create(id=111, user=self.voter, username="voter")
+
+    async def fresh(self):
+        return await ActiveMatchMessage.objects.select_related(
+            "match", "match__stage", "match__home_team", "match__away_team"
+        ).aget(poll_message_id=30)
+
+    def make_cog(self, channel):
+        role = FakeRole(role_id=self.role.id, name="Pickers", members=[FakeMember(111), FakeMember(222)])
+        guild = FakeGuild(guild_id=self.guild.id, name="Test Guild", roles=[role])
+        bot = FakeBot(channel=channel, guilds=[guild])
+        return MatchTickerCog(bot=bot)
+
+    async def test_a_vote_removes_that_name_by_editing_the_message(self):
+        channel = RecordingChannel(
+            channel_id=self.channel.id, messages={30: FakePollMessage(30, FakeClosablePoll([]))}
+        )
+        cog = self.make_cog(channel)
+
+        await cog.sync_state_message(await self.fresh())
+        posted = channel.sent[0]
+        self.assertIn("<@111>", " ".join(text_of(posted.kwargs["view"])))
+        self.assertIn("<@222>", " ".join(text_of(posted.kwargs["view"])))
+
+        await Prediction.objects.acreate(
+            pool=self.pool, match=self.match, user=self.voter, predicted_outcome=MatchOutcome.HOME_WIN
+        )
+        await cog.sync_state_message(await self.fresh())
+
+        # Edited, not reposted.
+        self.assertEqual(len(channel.sent), 1)
+        self.assertEqual(len(posted.edits), 1)
+        edited = " ".join(text_of(posted.edits[0]["view"]))
+        self.assertNotIn("<@111>", edited)
+        self.assertIn("<@222>", edited)
+
+    async def test_a_retracted_vote_puts_the_name_back(self):
+        await Prediction.objects.acreate(
+            pool=self.pool, match=self.match, user=self.voter, predicted_outcome=MatchOutcome.HOME_WIN
+        )
+        channel = RecordingChannel(
+            channel_id=self.channel.id, messages={30: FakePollMessage(30, FakeClosablePoll([]))}
+        )
+        cog = self.make_cog(channel)
+
+        await cog.sync_state_message(await self.fresh())
+        posted = channel.sent[0]
+        self.assertNotIn("<@111>", " ".join(text_of(posted.kwargs["view"])))
+
+        await Prediction.objects.filter(pool=self.pool, match=self.match, user=self.voter).adelete()
+        await cog.sync_state_message(await self.fresh())
+
+        self.assertIn("<@111>", " ".join(text_of(posted.edits[0]["view"])))
+
+    async def test_an_unchanged_voter_list_costs_no_edit(self):
+        channel = RecordingChannel(
+            channel_id=self.channel.id, messages={30: FakePollMessage(30, FakeClosablePoll([]))}
+        )
+        cog = self.make_cog(channel)
+
+        await cog.sync_state_message(await self.fresh())
+        await cog.sync_state_message(await self.fresh())
+
+        self.assertEqual(len(channel.sent), 1)
+        self.assertEqual(channel.sent[0].edits, [])
+
+    async def test_the_first_post_replies_to_the_poll(self):
+        channel = RecordingChannel(
+            channel_id=self.channel.id, messages={30: FakePollMessage(30, FakeClosablePoll([]))}
+        )
+        cog = self.make_cog(channel)
+
+        await cog.sync_state_message(await self.fresh())
+
+        reference = channel.sent[0].kwargs["reference"]
+        self.assertEqual(reference.message_id, 30)
+        # A deleted poll must not stop the status message going out.
+        self.assertFalse(reference.fail_if_not_exists)

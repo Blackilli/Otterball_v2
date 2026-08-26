@@ -11,6 +11,7 @@ from django.conf import settings
 from django.db.models import Max, Q
 from django.utils import timezone
 
+from discord_bot.components import MatchStatusView, TeamRow
 from discord_bot.models import (
     ActiveMatchMessage,
     DiscordGuildPool,
@@ -21,7 +22,7 @@ from discord_bot.models import (
 from discord_bot.services import sync_predictions_from_poll
 from discord_bot.utils import resolve_message_container
 from predictions.models import DEFAULT_REMINDER_LEAD_MINUTES, PoolConfiguration, Prediction
-from sports.models import Match, MatchStatus
+from sports.models import Match, MatchStatus, Team
 from sports.schemas import MatchUpdatePayload
 
 logger = logging.getLogger(__name__)
@@ -29,6 +30,11 @@ logger = logging.getLogger(__name__)
 # Discord caps a message at 2000 characters and a mention costs ~22 of them.
 # Past this many non-voters the message names a count instead of everyone.
 MAX_MENTIONS = 40
+
+# A live leader is shown by bold alone - Discord cannot tint the badge, and a
+# marker on every in-progress row was more noise than signal. A finished match
+# is the one place a marker earns its keep.
+WINNER_MARKER = "\N{TROPHY}"
 
 # Statuses after which nothing more will happen to the match.
 FINAL_STATUSES = (MatchStatus.FINISHED, MatchStatus.POSTPONED, MatchStatus.CANCELLED)
@@ -188,6 +194,31 @@ class MatchTickerCog(commands.Cog):
             except Exception as e:
                 logger.error(f"Failed live update for match {active_msg.match_id}: {e}", exc_info=True)
 
+    @commands.Cog.listener()
+    async def on_prediction_change(self, active_msg_id: int) -> None:
+        """A vote was cast or retracted - refresh that match's reminder now.
+
+        Dispatched by PollPredictionCog rather than called directly, so the two
+        cogs stay independent. The per-message lock plus the fingerprint make a
+        burst of votes collapse into one edit: a second vote arriving mid-edit
+        waits, then re-reads and finds the list already current.
+
+        Nobody added back to the list is notified by this - an edit never
+        pings. Only the first post does.
+        """
+        active_msg = await (
+            ActiveMatchMessage.objects.filter(id=active_msg_id, is_ticker_finalized=False)
+            .select_related("match", "match__stage", "match__home_team", "match__away_team")
+            .afirst()
+        )
+        if active_msg is None:
+            return
+
+        try:
+            await self.sync_state_message(active_msg)
+        except Exception as e:
+            logger.error(f"Failed to refresh reminder for match {active_msg.match_id}: {e}", exc_info=True)
+
     # ------------------------------------------------------------------
     # State machine
     # ------------------------------------------------------------------
@@ -215,17 +246,22 @@ class MatchTickerCog(commands.Cog):
         if state is MatchMessageState.UNKNOWN:
             return
 
-        fingerprint = (state, match.home_score, match.away_score)
+        # Resolved before the fingerprint rather than inside the renderer, so a
+        # vote cast or retracted while the reminder is up actually counts as a
+        # change - the score has not moved, and without this the message would
+        # keep naming someone who has since voted.
+        mentions = await self._missing_voter_mentions(active_msg) if state is MatchMessageState.STARTING_SOON else []
+
+        fingerprint = (state, match.home_score, match.away_score, tuple(mentions))
         if self.rendered.get(active_msg.id) == fingerprint and active_msg.ticker_message_id:
             return
 
-        content, embed, allowed_mentions = await self._render(state, active_msg)
+        view, allowed_mentions = await self._render(state, active_msg, mentions)
 
         posted = await self._upsert_ticker(
             container,
             active_msg,
-            content=content,
-            embed=embed,
+            view=view,
             allowed_mentions=allowed_mentions,
         )
         if not posted:
@@ -256,101 +292,163 @@ class MatchTickerCog(commands.Cog):
         self,
         state: MatchMessageState,
         active_msg: ActiveMatchMessage,
-    ) -> tuple[str | None, discord.Embed | None, discord.AllowedMentions | None]:
+        mentions: list[str],
+    ) -> tuple[MatchStatusView, discord.AllowedMentions | None]:
         match state:
             case MatchMessageState.STARTING_SOON:
-                return await self._render_starting_soon(active_msg)
+                return self._render_starting_soon(active_msg, mentions)
             case MatchMessageState.IN_PROGRESS:
-                return None, self._render_live_embed(active_msg.match), None
+                return self._render_live(active_msg.match), None
             case _:
-                return None, await self._render_final_embed(active_msg), None
+                return await self._render_final(active_msg), None
 
-    async def _render_starting_soon(
+    def _render_starting_soon(
         self,
         active_msg: ActiveMatchMessage,
-    ) -> tuple[str, None, discord.AllowedMentions | None]:
+        mentions: list[str],
+    ) -> tuple[MatchStatusView, discord.AllowedMentions | None]:
         match = active_msg.match
-        content = (
-            f"⏳ **Last call!** {match.home_team.name} vs. {match.away_team.name} "
-            f"kicks off {format_dt(match.kickoff, style='R')}."
+        leader = self._leading_team(match)
+
+        mention_block = None
+        allowed_mentions = None
+        if mentions:
+            shown = mentions[:MAX_MENTIONS]
+            mention_block = f"Still without a pick: {' '.join(shown)}"
+            if len(mentions) > MAX_MENTIONS:
+                mention_block += f" *and {len(mentions) - MAX_MENTIONS} more*"
+            allowed_mentions = discord.AllowedMentions(users=True, roles=False, everyone=False)
+
+        view = MatchStatusView(
+            heading=f"### ⏳ Last call! Kickoff {format_dt(match.kickoff, style='R')}",
+            footer="Vote on the poll above - it closes at kickoff.",
+            accent=self._team_color(leader),
+            teams=self._team_rows(match),
+            mentions=mention_block,
+            # Only offered when someone is actually being pinged, so the way
+            # out sits next to the ping rather than on an unrelated message.
+            mute_pool_id=active_msg.pool_id if mention_block else None,
         )
+        return view, allowed_mentions
 
-        mentions = await self._missing_voter_mentions(active_msg)
-        if not mentions:
-            return content, None, None
+    def _render_live(self, match: Match) -> MatchStatusView:
+        return self._scoreline_view(match, heading="### 🔴 Predictions locked", footer="Live score")
 
-        shown = mentions[:MAX_MENTIONS]
-        content += f"\nStill without a pick: {' '.join(shown)}"
-        if len(mentions) > MAX_MENTIONS:
-            content += f" *and {len(mentions) - MAX_MENTIONS} more*"
-        content += "\n-# Don't want these? `/notifications enabled:False` in this channel."
-
-        return content, None, discord.AllowedMentions(users=True, roles=False, everyone=False)
-
-    def _render_live_embed(self, match: Match) -> discord.Embed:
-        embed = discord.Embed(
-            title="🔴 Predictions locked",
-            description=self._score_line(match),
-            color=self._embed_color(match),
-            timestamp=timezone.now(),
-        )
-        embed.set_footer(text="Live score")
-        return embed
-
-    async def _render_final_embed(self, active_msg: ActiveMatchMessage) -> discord.Embed:
+    async def _render_final(self, active_msg: ActiveMatchMessage) -> MatchStatusView:
         match = active_msg.match
 
         if match.status in (MatchStatus.POSTPONED, MatchStatus.CANCELLED):
             label = "Postponed" if match.status == MatchStatus.POSTPONED else "Cancelled"
-            embed = discord.Embed(
-                title=f"⚠️ Match {label}",
-                description=(
+            return MatchStatusView(
+                heading=f"### ⚠️ Match {label}",
+                body=(
                     f"{match.home_team.name} vs. {match.away_team.name} has been dropped from the schedule.\n"
                     f"All predictions for this fixture are void."
                 ),
-                color=discord.Color.dark_grey(),
-                timestamp=timezone.now(),
+                footer="No points are awarded for this match.",
+                accent=discord.Color.dark_grey(),
             )
-            return embed
-
-        embed = discord.Embed(
-            title="🏁 Full time",
-            description=self._score_line(match),
-            color=self._embed_color(match),
-            timestamp=timezone.now(),
-        )
 
         winners = await self._winner_mentions(active_msg)
         if winners:
             shown = winners[:MAX_MENTIONS]
-            value = " ".join(shown)
+            detail = f"**🎯 Called it ({len(winners)})**\n{' '.join(shown)}"
             if len(winners) > MAX_MENTIONS:
-                value += f" *and {len(winners) - MAX_MENTIONS} more*"
-            embed.add_field(name=f"🎯 Called it ({len(winners)})", value=value, inline=False)
+                detail += f" *and {len(winners) - MAX_MENTIONS} more*"
         else:
-            embed.add_field(name="🎯 Called it", value="Nobody. Brutal.", inline=False)
+            detail = "**🎯 Called it**\nNobody. Brutal."
 
-        embed.set_footer(text="Leaderboard updates within a minute")
-        return embed
+        return self._scoreline_view(
+            match,
+            heading="### 🏁 Full time",
+            footer="Leaderboard updates within a minute",
+            detail=detail,
+        )
 
     # ------------------------------------------------------------------
     # Pieces
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _score_line(match: Match) -> str:
-        home_score = "-" if match.home_score is None else match.home_score
-        away_score = "-" if match.away_score is None else match.away_score
-        return f"## {match.home_team.name} {home_score} : {away_score} {match.away_team.name}"
+    def _team_ahead(match: Match) -> "Team | None":
+        """The team actually ahead, or None when level or not yet played.
+
+        Distinct from `_leading_team` on purpose: a 0-0 game and a 14-14 game
+        have no leader, and marking the home side as one would be a plain lie -
+        NFL regular season games really can tie.
+        """
+        if match.home_score is None or match.away_score is None:
+            return None
+        if match.home_score > match.away_score:
+            return match.home_team
+        if match.away_score > match.home_score:
+            return match.away_team
+        return None
+
+    @classmethod
+    def _leading_team(cls, match: Match) -> "Team":
+        """Whose colour the message wears, falling back to home when level.
+
+        The accent has to be *something*, so a tie or an unplayed match takes
+        the home side. Only `_team_ahead` decides who is marked as ahead.
+        """
+        return cls._team_ahead(match) or match.home_team
+
+    def _team_rows(self, match: Match) -> list[TeamRow]:
+        """Both sides, home first, with the one ahead marked.
+
+        Home always comes first - reordering by who is winning would make the
+        scoreboard shift under the reader mid-match.
+        """
+        ahead = self._team_ahead(match)
+        # Only full time gets a marker; a leader mid-match is carried by bold.
+        marker = WINNER_MARKER if match.status == MatchStatus.FINISHED else ""
+
+        # Both scores are measured against the longer of the two so a single
+        # digit lands on the same centre line as a double.
+        sides = ((match.home_team, match.home_score), (match.away_team, match.away_score))
+        widest = max((len(str(score)) for _, score in sides if score is not None), default=1)
+
+        rows = []
+        for team, score in sides:
+            is_ahead = ahead is not None and team.id == ahead.id
+            rows.append(
+                TeamRow(
+                    name=team.name,
+                    # Team.logo is a local ImageField behind a relative
+                    # MEDIA_URL, so it has no absolute URL for Discord to fetch.
+                    # logo_url is the provider's own CDN link, which is public -
+                    # and null for a team ingested without one, hence no badge
+                    # rather than a broken image.
+                    logo_url=team.logo_url or None,
+                    score=score,
+                    widest_score=widest,
+                    marker=marker if is_ahead else "",
+                    ahead=is_ahead,
+                )
+            )
+        return rows
+
+    def _scoreline_view(
+        self, match: Match, *, heading: str, footer: str, detail: str | None = None
+    ) -> MatchStatusView:
+        """The live and full-time layouts, which differ only in wording.
+
+        Both badges show, and the accent colour comes from whoever is ahead, so
+        the message visibly swings when the lead changes.
+        """
+        return MatchStatusView(
+            heading=heading,
+            footer=footer,
+            accent=self._team_color(self._leading_team(match)),
+            teams=self._team_rows(match),
+            detail=detail,
+        )
 
     @staticmethod
-    def _embed_color(match: Match) -> discord.Color:
-        leader = match.home_team
-        if match.home_score is not None and match.away_score is not None and match.away_score > match.home_score:
-            leader = match.away_team
-
+    def _team_color(team: "Team") -> discord.Color:
         try:
-            return discord.Color.from_str(leader.color)
+            return discord.Color.from_str(team.color)
         except ValueError, AttributeError:
             return discord.Color.blurple()
 
@@ -464,12 +562,9 @@ class MatchTickerCog(commands.Cog):
         container: discord.abc.Messageable,
         active_msg: ActiveMatchMessage,
         *,
-        content: str | None = None,
-        embed: discord.Embed | None = None,
+        view: MatchStatusView,
         allowed_mentions: discord.AllowedMentions | None = None,
     ) -> bool:
-        embeds = [embed] if embed else []
-
         if active_msg.ticker_message_id:
             try:
                 # A partial message edits without being fetched first, which
@@ -481,7 +576,11 @@ class MatchTickerCog(commands.Cog):
                     message = get_partial(active_msg.ticker_message_id)
                 else:
                     message = await container.fetch_message(active_msg.ticker_message_id)
-                await message.edit(content=content, embeds=embeds)
+                # Every state of this message is Components V2, so there is
+                # never a content/embed to clear first. A status message left
+                # over from the embed era would reject this edit - none exist,
+                # and the IS_COMPONENTS_V2 flag is one-way anyway.
+                await message.edit(view=view)
                 return True
             except discord.NotFound:
                 # Someone deleted it - fall through and post a fresh one.
@@ -492,8 +591,7 @@ class MatchTickerCog(commands.Cog):
 
         try:
             message = await container.send(
-                content=content,
-                embeds=embeds,
+                view=view,
                 allowed_mentions=allowed_mentions,
                 reference=discord.MessageReference(
                     message_id=active_msg.poll_message_id,

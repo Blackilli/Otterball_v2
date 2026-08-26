@@ -3,10 +3,9 @@ import logging
 import discord
 from discord import app_commands
 from discord.ext import commands
-from django.db import IntegrityError
 
-from discord_bot.models import DiscordGuildPool, DiscordProfile, PoolNotificationPreference
-from users.models import User
+from discord_bot.models import DiscordGuildPool, PoolNotificationPreference
+from discord_bot.services import aget_or_create_user_id, aset_missing_vote_reminders
 
 logger = logging.getLogger(__name__)
 
@@ -42,9 +41,8 @@ class NotificationPreferenceCog(commands.Cog):
         if guild_pool is None:
             return
 
-        user_id = await self._aget_or_create_user_id(interaction.user)
-
         if enabled is None:
+            user_id = await aget_or_create_user_id(interaction.user)
             preference = await PoolNotificationPreference.objects.filter(
                 user_id=user_id,
                 pool_id=guild_pool.pool_id,
@@ -57,11 +55,7 @@ class NotificationPreferenceCog(commands.Cog):
             )
             return
 
-        await PoolNotificationPreference.objects.aupdate_or_create(
-            user_id=user_id,
-            pool_id=guild_pool.pool_id,
-            defaults={"notify_missing_votes": enabled},
-        )
+        await aset_missing_vote_reminders(interaction.user, guild_pool.pool_id, enabled=enabled)
         state = "on" if enabled else "off"
         await interaction.response.send_message(
             f"Missing-vote reminders for **{guild_pool.pool.name}** are now **{state}**.",
@@ -133,25 +127,3 @@ class NotificationPreferenceCog(commands.Cog):
             ephemeral=True,
         )
         return None
-
-    @staticmethod
-    async def _aget_or_create_user_id(discord_user: discord.abc.User) -> int:
-        profile = await DiscordProfile.objects.filter(id=discord_user.id).afirst()
-        if profile:
-            return profile.user_id
-
-        # Someone can set their preference before they ever cast a vote, which
-        # is the one path that creates an account outside the poll sync.
-        username = discord_user.name
-        try:
-            user = await User.objects.acreate_user(username=username, is_active=True)
-        except IntegrityError:
-            user = await User.objects.acreate_user(username=f"{username}-{discord_user.id}", is_active=True)
-
-        await DiscordProfile.objects.acreate(
-            user=user,
-            id=discord_user.id,
-            username=discord_user.name,
-            global_name=discord_user.global_name,
-        )
-        return user.id

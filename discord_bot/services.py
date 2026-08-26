@@ -1,13 +1,14 @@
 import logging
 
 import discord
+from django.db import IntegrityError
 
 from discord_bot.constants import (
     DISCORD_DRAWABLE_POLL_ANSWER_ORDER,
     DISCORD_KO_POLL_ANSWER_ORDER,
     DISCORD_POLL_ANSWER_ORDER_MAP,
 )
-from discord_bot.models import ActiveMatchMessage, DiscordProfile
+from discord_bot.models import ActiveMatchMessage, DiscordProfile, PoolNotificationPreference
 from discord_bot.utils import resolve_message_container
 from predictions.models import Prediction
 from users.models import User
@@ -122,3 +123,42 @@ async def sync_predictions_from_poll(
         )
 
     return len(match_predictions)
+
+
+async def aget_or_create_user_id(discord_user: discord.abc.User) -> int:
+    """The users.User id behind a Discord account, creating one if needed.
+
+    Someone can mute a pool before they have ever cast a vote, so this is the
+    one path that creates an account outside the poll sync. Usernames collide
+    across Discord accounts, hence the fallback.
+    """
+    profile = await DiscordProfile.objects.filter(id=discord_user.id).afirst()
+    if profile:
+        return profile.user_id
+
+    try:
+        user = await User.objects.acreate_user(username=discord_user.name, is_active=True)
+    except IntegrityError:
+        user = await User.objects.acreate_user(username=f"{discord_user.name}-{discord_user.id}", is_active=True)
+
+    await DiscordProfile.objects.acreate(
+        user=user,
+        id=discord_user.id,
+        username=discord_user.name,
+        global_name=discord_user.global_name,
+    )
+    return user.id
+
+
+async def aset_missing_vote_reminders(discord_user: discord.abc.User, pool_id: int, *, enabled: bool) -> None:
+    """Turn a user's missing-vote reminders on or off for one pool.
+
+    Shared by the /notifications command and the Mute button on the reminder
+    itself, so the two cannot disagree about what muting means.
+    """
+    user_id = await aget_or_create_user_id(discord_user)
+    await PoolNotificationPreference.objects.aupdate_or_create(
+        user_id=user_id,
+        pool_id=pool_id,
+        defaults={"notify_missing_votes": enabled},
+    )
