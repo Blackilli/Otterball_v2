@@ -34,6 +34,12 @@ class ScheduledTask:
     #: False for a task whose absence degrades rather than breaks a pool, so
     #: readiness reports it as a warning instead of a failure.
     critical: bool = True
+    #: Whether a worker starting up should run this once if it is overdue.
+    #: Off for the live syncs: they run every couple of minutes, so a one-shot
+    #: at startup settles only whatever happens to be in play that second and
+    #: the next scheduled tick would have covered it anyway. The infrastructure
+    #: syncs are the ones whose absence actually strands a pool.
+    catch_up: bool = True
 
 
 SCHEDULED_TASKS: tuple[ScheduledTask, ...] = (
@@ -50,6 +56,7 @@ SCHEDULED_TASKS: tuple[ScheduledTask, ...] = (
         every=datetime.timedelta(minutes=2),
         sport=Sport.AMERICAN_FOOTBALL,
         purpose="status and scores - this is what moves a match to FINISHED and fires scoring",
+        catch_up=False,
     ),
     ScheduledTask(
         task="sports.tasks.sync_nflverse_results",
@@ -73,6 +80,7 @@ SCHEDULED_TASKS: tuple[ScheduledTask, ...] = (
         every=datetime.timedelta(minutes=2),
         sport=Sport.SOCCER,
         purpose="status and scores - this is what moves a match to FINISHED and fires scoring",
+        catch_up=False,
     ),
 )
 

@@ -193,3 +193,10 @@ LOGGING = {
 }
 
 REDIS_MATCH_UPDATE_TOPIC = "match_update"
+
+# A starting Celery worker runs the overdue infrastructure syncs once, so a
+# spell with Beat down does not leave a pool stranded without fixtures. It
+# never writes PeriodicTask.last_run_at, so check_pool keeps reporting the
+# schedule as stale and a dead Beat stays visible. Set to 0 to leave the
+# schedule entirely to Beat.
+INGESTION_CATCHUP_ENABLED = os.getenv("INGESTION_CATCHUP_ENABLED", "1") not in ("0", "false", "False")
