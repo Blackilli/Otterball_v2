@@ -3,7 +3,7 @@ import logging
 import discord
 from discord.ext import commands
 
-from discord_bot.models import DiscordGuildRole
+from discord_bot.models import DiscordGuild, DiscordGuildRole
 
 logger = logging.getLogger(__name__)
 
@@ -14,7 +14,11 @@ class RoleSyncCog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_guild_role_create(self, role: discord.Role):
-        db_guild = await DiscordGuildRole.objects.filter(id=role.guild.id).afirst()
+        # DiscordGuild, not DiscordGuildRole: looking the guild up in the role
+        # table always missed, so this handler returned early every time and a
+        # role created while the bot was running was only picked up by the next
+        # startup reconciliation.
+        db_guild = await DiscordGuild.objects.filter(id=role.guild.id).afirst()
         if not db_guild:
             return
 

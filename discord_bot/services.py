@@ -23,7 +23,7 @@ async def aget_discord_profile_cache() -> dict[int, DiscordProfile]:
     }
 
 
-def _resolve_answer_order(match_msg: ActiveMatchMessage, poll: discord.Poll):
+def resolve_answer_order(match_msg: ActiveMatchMessage, poll: discord.Poll):
     answer_order = DISCORD_POLL_ANSWER_ORDER_MAP.get(match_msg.match.stage.stage_type)
 
     if match_msg.poll_use_fallback_answer_ordering:
@@ -71,7 +71,7 @@ async def sync_predictions_from_poll(
         logger.warning(f"Poll not found for match {match_msg.match_id}")
         return -1
 
-    answer_order = _resolve_answer_order(match_msg, message.poll)
+    answer_order = resolve_answer_order(match_msg, message.poll)
 
     match_predictions = []
     try:
@@ -89,65 +89,90 @@ async def sync_predictions_from_poll(
                 profile = profile_cache.get(voter.id)
                 if not profile:
                     logger.info(f"Creating user for Discord ID: {voter.id} ({voter.name})")
-                    user = await User.objects.acreate_user(username=voter.name, is_active=True)
-                    profile = await DiscordProfile.objects.acreate(
-                        user=user,
-                        id=voter.id,
-                        username=voter.name,
-                        global_name=voter.global_name,
-                    )
+                    profile = await aget_or_create_profile(voter)
                     profile_cache[profile.id] = profile
-                    user_id = user.id
-                else:
-                    user_id = profile.user_id
 
-                match_predictions.append((user_id, predicted_outcome))
+                match_predictions.append((profile.user_id, predicted_outcome))
     except (discord.NotFound, discord.Forbidden) as e:
         logger.warning(
             f"Skipping poll synchronization for match {match_msg.match_id} due to discord permissions: {e}"
         )
         return -1
 
-    voted_user_ids = {user_id for user_id, _ in match_predictions}
+    # Last answer wins if a poll ever allows multiple picks - and it keeps the
+    # bulk upsert below from hitting the same row twice, which Postgres refuses
+    # within one statement.
+    outcome_by_user = dict(match_predictions)
+
     await Prediction.objects.filter(
         pool_id=match_msg.pool_id,
         match_id=match_msg.match_id,
-    ).exclude(user_id__in=voted_user_ids).adelete()
+    ).exclude(user_id__in=outcome_by_user).adelete()
 
-    for user_id, predicted_outcome in match_predictions:
-        await Prediction.objects.aupdate_or_create(
-            pool_id=match_msg.pool_id,
-            user_id=user_id,
-            match_id=match_msg.match_id,
-            defaults={"predicted_outcome": predicted_outcome},
-        )
+    # One statement rather than an upsert per voter: the startup pass runs this
+    # for every open poll, and a busy pool is dozens of round trips a match.
+    await Prediction.objects.abulk_create(
+        [
+            Prediction(
+                pool_id=match_msg.pool_id,
+                match_id=match_msg.match_id,
+                user_id=user_id,
+                predicted_outcome=predicted_outcome,
+            )
+            for user_id, predicted_outcome in outcome_by_user.items()
+        ],
+        update_conflicts=True,
+        update_fields=["predicted_outcome"],
+        unique_fields=["pool", "match", "user"],
+    )
 
-    return len(match_predictions)
+    return len(outcome_by_user)
 
 
-async def aget_or_create_user_id(discord_user: discord.abc.User) -> int:
-    """The users.User id behind a Discord account, creating one if needed.
+async def aget_or_create_profile(discord_user: discord.abc.User) -> DiscordProfile:
+    """The DiscordProfile for an account, creating it and its User if needed.
 
-    Someone can mute a pool before they have ever cast a vote, so this is the
-    one path that creates an account outside the poll sync. Usernames collide
-    across Discord accounts, hence the fallback.
+    The single place an account is created from a Discord user. Usernames
+    collide across Discord accounts, hence the fallback - `sync_predictions_from_poll`
+    used to create users itself without one, so a second voter whose display
+    name matched an existing user raised IntegrityError and took the whole
+    reconciliation pass down with it.
     """
     profile = await DiscordProfile.objects.filter(id=discord_user.id).afirst()
     if profile:
-        return profile.user_id
+        return profile
+
+    # Checked rather than caught: two Discord accounts can share a display
+    # name, and letting the insert fail first only works under autocommit -
+    # inside a transaction the IntegrityError poisons the connection and the
+    # retry raises TransactionManagementError instead of recovering.
+    username = discord_user.name
+    if await User.objects.filter(username=username).aexists():
+        username = f"{discord_user.name}-{discord_user.id}"
 
     try:
-        user = await User.objects.acreate_user(username=discord_user.name, is_active=True)
+        user = await User.objects.acreate_user(username=username, is_active=True)
     except IntegrityError:
+        # Lost the race between the check and the insert. The id-suffixed name
+        # is unique per Discord account, so this can only be the plain one.
         user = await User.objects.acreate_user(username=f"{discord_user.name}-{discord_user.id}", is_active=True)
 
-    await DiscordProfile.objects.acreate(
+    return await DiscordProfile.objects.acreate(
         user=user,
         id=discord_user.id,
         username=discord_user.name,
         global_name=discord_user.global_name,
     )
-    return user.id
+
+
+async def aget_or_create_user_id(discord_user: discord.abc.User) -> int:
+    """The users.User id behind a Discord account, creating one if needed.
+
+    Someone can mute a pool before they have ever cast a vote, so this is
+    reachable outside the poll sync.
+    """
+    profile = await aget_or_create_profile(discord_user)
+    return profile.user_id
 
 
 async def aset_missing_vote_reminders(discord_user: discord.abc.User, pool_id: int, *, enabled: bool) -> None:

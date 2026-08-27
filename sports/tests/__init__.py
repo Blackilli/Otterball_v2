@@ -1,14 +1,18 @@
 import datetime
+import io
 import json
 import pathlib
 import shutil
+import tarfile
 import tempfile
 from io import StringIO
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import redis
 from django.conf import settings
 from django.core.management import call_command
+from django.core.management.base import CommandError
 from django.test import TestCase, override_settings
 from django.utils import timezone
 from PIL import Image
@@ -206,6 +210,30 @@ class NotifyMatchUpdateSignalTests(TestCase):
         self.assertEqual(payload.home_score, 1)
         self.assertEqual(payload.away_score, 0)
 
+    def test_unreachable_redis_is_one_warning_and_not_an_error(self):
+        """A Redis that is down must not derail the save, or bury the log.
+
+        robust=True already keeps it from propagating; what it does not do is
+        keep it quiet - it logs at ERROR with a full traceback, and LOGGING
+        turns on tracebacks_show_locals, so an ingestion run against a box
+        with no valkey drowns in a couple of hundred lines per match.
+        """
+        self.mock_redis.publish.side_effect = redis.ConnectionError("Connection refused")
+
+        with self.assertLogs("sports.signals", level="WARNING") as logs:
+            with self.captureOnCommitCallbacks(execute=True):
+                self.match.status = MatchStatus.LIVE
+                self.match.save()
+
+        self.assertEqual(len(logs.records), 1)
+        record = logs.records[0]
+        self.assertEqual(record.levelname, "WARNING")
+        self.assertIsNone(record.exc_info, "a traceback here is what makes the log unreadable")
+        self.assertIn(str(self.match.id), record.getMessage())
+
+        self.match.refresh_from_db()
+        self.assertEqual(self.match.status, MatchStatus.LIVE)
+
     def test_match_creation_does_not_publish(self):
         with self.captureOnCommitCallbacks(execute=True):
             Match.objects.create(
@@ -217,6 +245,52 @@ class NotifyMatchUpdateSignalTests(TestCase):
             )
 
         self.mock_redis.publish.assert_not_called()
+
+    def test_fixture_load_does_not_publish(self):
+        """import_db/loaddata replays a dump over rows that already exist, so every Match
+        arrives as an update rather than a creation. Without the `raw` guard that broadcast a
+        live-score message per restored match, and - with Redis unreachable, which is the normal
+        state on a machine being restored onto - took the restore's exit code down with it."""
+        fixture = [
+            {
+                "model": "sports.match",
+                "pk": self.match.pk,
+                "fields": {
+                    "stage": self.stage.pk,
+                    "home_team": self.home_team.pk,
+                    "away_team": self.away_team.pk,
+                    "kickoff": self.match.kickoff.isoformat(),
+                    "status": MatchStatus.FINISHED,
+                    "home_score": 3,
+                    "away_score": 2,
+                },
+            }
+        ]
+        fixture_path = Path(tempfile.mkdtemp()) / "match.json"
+        fixture_path.write_text(json.dumps(fixture))
+        self.addCleanup(shutil.rmtree, fixture_path.parent)
+
+        with self.captureOnCommitCallbacks(execute=True):
+            call_command("loaddata", str(fixture_path), verbosity=0)
+
+        self.mock_redis.publish.assert_not_called()
+        self.match.refresh_from_db()
+        self.assertEqual(self.match.home_score, 3)
+
+    def test_publish_failure_does_not_break_the_save(self):
+        """The publish is deferred to after the commit, so it is outside the receiver's own
+        try/except - only on_commit(robust=True) keeps an unreachable Redis from propagating
+        out of whatever wrote the match."""
+        self.mock_redis.publish.side_effect = ConnectionError("Connection refused")
+
+        with self.assertLogs("django.test", level="ERROR"):
+            with self.captureOnCommitCallbacks(execute=True):
+                self.match.status = MatchStatus.LIVE
+                self.match.save()
+
+        self.mock_redis.publish.assert_called_once()
+        self.match.refresh_from_db()
+        self.assertEqual(self.match.status, MatchStatus.LIVE)
 
 
 class FakeFifaClient:
@@ -717,3 +791,107 @@ class PruneTeamLogosTests(TestCase):
         output = self.run_command()
 
         self.assertIn("No orphaned logo files", output)
+
+
+class ExportImportBundleTests(TestCase):
+    """Covers `manage.py export_db` / `import_db` as a migration tool.
+
+    The database dump only ever stored a FileField's *path*, so a restore onto a
+    fresh machine left every Team pointing at a logo that was not there - the media
+    tree lives in a Docker volume the dump never touched. A bundle carries both.
+    """
+
+    def setUp(self):
+        self.source_media = tempfile.mkdtemp()
+        self.target_media = tempfile.mkdtemp()
+        self.workdir = tempfile.mkdtemp()
+        for temp_dir in (self.source_media, self.target_media, self.workdir):
+            self.addCleanup(shutil.rmtree, temp_dir, ignore_errors=True)
+
+        logo_dir = pathlib.Path(self.source_media, "team_logos")
+        logo_dir.mkdir(parents=True)
+        self.logo_bytes = b"\x89PNG\r\n\x1a\n" + b"otter" * 32
+        pathlib.Path(logo_dir, "chiefs.png").write_bytes(self.logo_bytes)
+
+        self.team = Team.objects.create(name="Chiefs", logo="team_logos/chiefs.png")
+
+    def path(self, name):
+        return str(pathlib.Path(self.workdir, name))
+
+    def export(self, name, *args):
+        out = StringIO()
+        with override_settings(MEDIA_ROOT=self.source_media):
+            call_command("export_db", self.path(name), *args, stdout=out)
+        return out.getvalue()
+
+    def restore(self, name, *args):
+        out = StringIO()
+        with override_settings(MEDIA_ROOT=self.target_media):
+            call_command("import_db", self.path(name), "--yes", *args, stdout=out)
+        return out.getvalue()
+
+    def test_bundle_round_trip_restores_the_logo_next_to_the_row(self):
+        self.export("bundle.tar.gz")
+
+        with tarfile.open(self.path("bundle.tar.gz")) as tar:
+            self.assertIn("data.json", tar.getnames())
+            self.assertIn("media/team_logos/chiefs.png", tar.getnames())
+
+        output = self.restore("bundle.tar.gz")
+
+        self.assertIn("1 media file(s)", output)
+        restored_logo = pathlib.Path(self.target_media, "team_logos", "chiefs.png")
+        self.assertEqual(restored_logo.read_bytes(), self.logo_bytes)
+        # The whole point: the row's path resolves against the restored media root.
+        with override_settings(MEDIA_ROOT=self.target_media):
+            self.assertTrue(pathlib.Path(settings.MEDIA_ROOT, Team.objects.get(name="Chiefs").logo.name).is_file())
+
+    def test_a_fixture_name_refuses_rather_than_silently_dropping_media(self):
+        """The old failure mode was quiet: you got a .json.gz, restored it, and only
+        found out the logos were missing when Discord rendered blank emoji."""
+        with self.assertRaisesMessage(CommandError, "cannot carry the media files"):
+            self.export("db.json.gz")
+
+    def test_no_media_produces_a_plain_fixture_that_still_imports(self):
+        self.export("db.json.gz", "--no-media")
+
+        self.assertFalse(tarfile.is_tarfile(self.path("db.json.gz")))
+
+        output = self.restore("db.json.gz")
+
+        self.assertIn("no media in this export", output)
+        self.assertEqual(list(pathlib.Path(self.target_media).iterdir()), [])
+
+    def test_no_media_on_import_leaves_the_existing_tree_alone(self):
+        self.export("bundle.tar.gz")
+        pathlib.Path(self.target_media, "keep-me.txt").write_bytes(b"local")
+
+        output = self.restore("bundle.tar.gz", "--no-media")
+
+        self.assertIn("media left untouched", output)
+        self.assertEqual([p.name for p in pathlib.Path(self.target_media).iterdir()], ["keep-me.txt"])
+
+    def test_a_tarball_without_a_fixture_is_rejected(self):
+        with tarfile.open(self.path("not-a-bundle.tar.gz"), "w:gz") as tar:
+            tar.add(
+                pathlib.Path(self.source_media, "team_logos", "chiefs.png"), arcname="media/team_logos/chiefs.png"
+            )
+
+        with self.assertRaisesMessage(CommandError, "contains no data.json"):
+            self.restore("not-a-bundle.tar.gz")
+
+    def test_a_member_pointing_outside_the_destination_is_refused(self):
+        """A bundle is a file that travels between machines, so extraction has to
+        assume it may be hostile - filter="data" is what enforces that."""
+        with tarfile.open(self.path("evil.tar.gz"), "w:gz") as tar:
+            fixture = tarfile.TarInfo("data.json")
+            fixture.size = 2
+            tar.addfile(fixture, io.BytesIO(b"[]"))
+            escape = tarfile.TarInfo("../escaped.txt")
+            escape.size = 5
+            tar.addfile(escape, io.BytesIO(b"pwned"))
+
+        with self.assertRaises(tarfile.OutsideDestinationError):
+            self.restore("evil.tar.gz")
+
+        self.assertFalse(pathlib.Path(self.workdir).parent.joinpath("escaped.txt").exists())

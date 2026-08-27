@@ -1,10 +1,12 @@
 import csv
 import datetime
+import json
 import tempfile
 from io import StringIO
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from asgiref.sync import sync_to_async
 from django.contrib.admin.sites import AdminSite
 from django.contrib.auth import get_user_model
 from django.contrib.messages.storage.fallback import FallbackStorage
@@ -12,7 +14,10 @@ from django.core.exceptions import ValidationError
 from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.test import RequestFactory, TestCase
+from django.urls import reverse
 from django.utils import timezone
+from django_celery_beat.models import IntervalSchedule, PeriodicTask
+from django_celery_results.models import TaskResult
 
 from discord_bot.models import (
     DiscordChannel,
@@ -22,14 +27,25 @@ from discord_bot.models import (
     DiscordTeamEmoji,
 )
 from predictions.admin import PredictionPoolAdmin
+from predictions.history import (
+    build_consensus,
+    build_contrarians,
+    build_crowd_standing,
+    build_outcome_mix,
+    build_rank_history,
+    build_streaks,
+    final_order,
+)
 from predictions.models import (
     MAX_POLL_LOOKAHEAD_DAYS,
     MAX_REMINDER_LEAD_MINUTES,
     PoolStageRule,
     Prediction,
     PredictionPool,
+    hit_rate_percent,
     sync_pool_stage_rules,
 )
+from predictions.readiness import FAIL, OK, WARN, check_environment, check_pool, worst
 from predictions.signals import process_match_update
 from sports.models import Competition, Match, MatchOutcome, MatchStatus, Season, Sport, Stage, StageType, Team
 
@@ -349,10 +365,61 @@ class ProcessMatchUpdateTests(PredictionScoringTestCase):
         prediction.refresh_from_db()
         self.assertFalse(prediction.is_processed)
 
+    def test_fixture_load_does_not_trigger_recalculation(self):
+        # Guards the `raw` check in receive_match_update: import_db/loaddata replays a dump
+        # over rows that already exist, so a finished match arrives as an update rather than a
+        # creation. The points in the dump are already final, so re-scoring every restored
+        # match is pure churn - and it would overwrite the restored values with recomputed ones.
+        prediction = self.make_prediction(predicted_outcome=MatchOutcome.HOME_WIN)
+        prediction.points_awarded = 0
+        prediction.is_processed = False
+        prediction.save()
+
+        fixture = [
+            {
+                "model": "sports.match",
+                "pk": self.match.pk,
+                "fields": {
+                    "stage": self.stage.pk,
+                    "home_team": self.home_team.pk,
+                    "away_team": self.away_team.pk,
+                    "kickoff": self.match.kickoff.isoformat(),
+                    "status": MatchStatus.FINISHED,
+                    "home_score": 2,
+                    "away_score": 1,
+                },
+            }
+        ]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fixture_path = f"{tmpdir}/match.json"
+            with open(fixture_path, "w") as fh:
+                json.dump(fixture, fh)
+
+            with self.captureOnCommitCallbacks(execute=True):
+                call_command("loaddata", fixture_path, verbosity=0)
+
+        prediction.refresh_from_db()
+        self.assertFalse(prediction.is_processed)
+        self.assertEqual(prediction.points_awarded, 0)
+
+
+class HitRatePercentTests(TestCase):
+    """Covers hit_rate_percent, the one place accuracy is rounded for display."""
+
+    def test_rounds_to_a_whole_percent(self):
+        self.assertEqual(hit_rate_percent(1, 3), 33)
+        self.assertEqual(hit_rate_percent(2, 3), 67)
+        self.assertEqual(hit_rate_percent(3, 4), 75)
+
+    def test_no_picks_is_zero_rather_than_a_crash(self):
+        """No listed player has zero picks, but a hand-built row might."""
+        self.assertEqual(hit_rate_percent(0, 0), 0)
+
 
 class LeaderboardTests(TestCase):
     """Covers PredictionPool.aget_leaderboard's Standard Competition Ranking
-    (1-2-2-4: ties share a rank, the next rank skips accordingly)."""
+    (1-2-2-4: ties share a rank, the next rank skips accordingly), now ordered
+    by points and then accuracy."""
 
     def setUp(self):
         self.competition = Competition.objects.create(name="World Cup")
@@ -384,6 +451,70 @@ class LeaderboardTests(TestCase):
             points_awarded=points,
             is_processed=True,
         )
+
+    async def award_many(self, user, *point_values):
+        """One prediction per value, so a 0 is a pick that was made and missed."""
+        for points in point_values:
+            await self.award(user, points)
+
+    async def ranked(self):
+        return {user.username: rank async for rank, user, _points in self.pool.aget_leaderboard()}
+
+    async def test_accuracy_breaks_a_tie_on_points(self):
+        """Both on 8, but alice got both her picks right and bob missed two."""
+        await self.award_many(self.alice, 4, 4)
+        await self.award_many(self.bob, 8, 0, 0)
+
+        self.assertEqual(await self.ranked(), {"alice": 1, "bob": 2})
+
+    async def test_level_on_points_and_accuracy_still_shares_a_rank(self):
+        await self.award_many(self.alice, 4, 4)
+        await self.award_many(self.bob, 4, 4)
+        await self.award_many(self.carol, 1)
+
+        self.assertEqual(await self.ranked(), {"alice": 1, "bob": 1, "carol": 3})
+
+    async def test_accuracy_never_outweighs_points(self):
+        """It is a tiebreaker, not a second currency: 20 points beats a perfect 8."""
+        await self.award_many(self.alice, 4, 4)
+        await self.award_many(self.bob, 20, 0, 0, 0)
+
+        self.assertEqual(await self.ranked(), {"bob": 1, "alice": 2})
+
+    async def test_accuracy_counts_only_this_pool(self):
+        other_pool = await PredictionPool.objects.acreate(name="Other", season=self.season)
+        await self.award_many(self.alice, 4, 4)
+        await self.award_many(self.bob, 4, 4)
+        # Misses in another pool must not drag bob's accuracy down here.
+        match = await Match.objects.acreate(
+            stage=self.stage,
+            home_team=self.home_team,
+            away_team=self.away_team,
+            kickoff=timezone.now(),
+            status=MatchStatus.FINISHED,
+            home_score=1,
+            away_score=0,
+        )
+        await Prediction.objects.acreate(
+            pool=other_pool,
+            match=match,
+            user=self.bob,
+            predicted_outcome=MatchOutcome.AWAY_WIN,
+            points_awarded=0,
+            is_processed=True,
+        )
+
+        self.assertEqual(await self.ranked(), {"alice": 1, "bob": 1})
+
+    async def test_picks_and_correct_ride_along_on_the_user(self):
+        """Both surfaces read these off the annotation instead of re-querying."""
+        await self.award_many(self.alice, 4, 0, 4)
+
+        leaderboard = [entry async for entry in self.pool.aget_leaderboard()]
+        _rank, user, points = leaderboard[0]
+
+        self.assertEqual((points, user.pool_prediction_count, user.pool_correct_count), (8, 3, 2))
+        self.assertAlmostEqual(user.pool_hit_rate, 2 / 3)
 
     async def test_tied_scores_share_a_rank_and_next_rank_skips(self):
         await self.award(self.alice, 10)
@@ -939,10 +1070,16 @@ class CheckPoolCommandTests(TestCase):
         DiscordTeamEmoji.objects.create(id=10, team=self.home, name="browns")
         DiscordTeamEmoji.objects.create(id=11, team=self.away, name="vikings")
         self.pool.stage_rules.update(points_per_correct=1)
+        # Configured now includes "something keeps the sport data fresh" - an
+        # unscheduled ingestion is a FAIL, and having run recently is what
+        # keeps it off the WARN list too.
+        call_command("ensure_schedule", stdout=StringIO())
+        PeriodicTask.objects.update(last_run_at=timezone.now())
 
         report, exit_code = self.run_check()
 
         self.assertNotIn("FAIL", report)
+        self.assertNotIn("WARN", report)
         self.assertEqual(exit_code, 0)
 
     def test_flags_a_stage_type_with_no_poll_layout(self):
@@ -1100,3 +1237,565 @@ class CreatePoolPartialRebindTests(TestCase):
 
         self.assertEqual((binding.channel_id, binding.notification_role_id), (2, 3))
         self.assertTrue(binding.is_active)
+
+
+class RankHistoryTests(TestCase):
+    """Covers predictions/history.py, the walk behind the rank-over-time chart."""
+
+    def setUp(self):
+        self.competition = Competition.objects.create(name="World Cup")
+        self.season = Season.objects.create(name="2026 World Cup", competition=self.competition, year=2026)
+        self.stage = Stage.objects.create(season=self.season, name="Group A", stage_type=StageType.GROUP, level=1)
+        self.pool = PredictionPool.objects.create(name="Pool", season=self.season)
+        self.home_team = Team.objects.create(name="Germany")
+        self.away_team = Team.objects.create(name="Brazil")
+        self.alice = User.objects.create_user(username="alice")
+        self.bob = User.objects.create_user(username="bob")
+        self.kickoff = timezone.now() - datetime.timedelta(days=10)
+        self.match_count = 0
+
+    def match(self):
+        self.match_count += 1
+        return Match.objects.create(
+            stage=self.stage,
+            home_team=self.home_team,
+            away_team=self.away_team,
+            kickoff=self.kickoff + datetime.timedelta(hours=self.match_count),
+            status=MatchStatus.FINISHED,
+            home_score=1,
+            away_score=0,
+        )
+
+    def play(self, *rounds):
+        """`rounds` is one dict of {user: points} per match, in kickoff order."""
+        for awards in rounds:
+            match = self.match()
+            for user, points in awards.items():
+                Prediction.objects.create(
+                    pool=self.pool,
+                    match=match,
+                    user=user,
+                    predicted_outcome=MatchOutcome.HOME_WIN,
+                    points_awarded=points,
+                    is_processed=True,
+                )
+        return list(
+            Prediction.objects.filter(pool=self.pool, match__status=MatchStatus.FINISHED)
+            .select_related("match", "user")
+            .order_by("match__kickoff", "match_id")
+        )
+
+    def test_points_accumulate_across_matches(self):
+        history = build_rank_history(self.play({self.alice: 3}, {self.alice: 4}, {self.alice: 0}))
+
+        self.assertEqual([entry.standings[self.alice.id].points for entry in history], [3, 7, 7])
+        self.assertEqual([entry.standings[self.alice.id].correct for entry in history], [1, 2, 2])
+        self.assertEqual([entry.standings[self.alice.id].picks for entry in history], [1, 2, 3])
+
+    def test_a_player_appears_only_once_they_have_picked(self):
+        """Ranking someone on zero picks would show them entering last and
+        climbing, which is not what happened - they were not playing yet."""
+        history = build_rank_history(self.play({self.alice: 3}, {self.alice: 3, self.bob: 3}))
+
+        self.assertNotIn(self.bob.id, history[0].standings)
+        self.assertIn(self.bob.id, history[1].standings)
+
+    def test_ranks_use_points_then_accuracy(self):
+        """Same rule as the live leaderboard: level on points, accuracy decides."""
+        history = build_rank_history(
+            self.play(
+                {self.alice: 6, self.bob: 0},
+                {self.alice: 0, self.bob: 6},
+                {self.bob: 0},
+            )
+        )
+        final = history[-1].standings
+
+        # Both on 6; alice from 2 picks, bob from 3.
+        self.assertEqual((final[self.alice.id].points, final[self.bob.id].points), (6, 6))
+        self.assertEqual((final[self.alice.id].rank, final[self.bob.id].rank), (1, 2))
+
+    def test_ties_share_a_rank(self):
+        history = build_rank_history(self.play({self.alice: 3, self.bob: 3}))
+        standings = history[-1].standings
+
+        self.assertEqual({standings[self.alice.id].rank, standings[self.bob.id].rank}, {1})
+
+    def test_history_is_empty_without_scored_matches(self):
+        self.assertEqual(build_rank_history([]), [])
+
+    def test_consensus_counts_who_got_each_match_right(self):
+        rates = build_consensus(self.play({self.alice: 3, self.bob: 0}, {self.alice: 0, self.bob: 0}))
+
+        self.assertEqual([(rate.picks, rate.correct, rate.percent) for rate in rates], [(2, 1, 50), (2, 0, 0)])
+
+    def test_consensus_has_no_majority_when_the_vote_is_tied(self):
+        """A split pool has no consensus; inventing one puts words in its mouth."""
+        match = self.match()
+        self.vote(match, self.alice, MatchOutcome.HOME_WIN)
+        self.vote(match, self.bob, MatchOutcome.AWAY_WIN)
+
+        self.assertIsNone(build_consensus(self.ordered_predictions())[0].majority)
+
+    def test_points_if_right_comes_from_whoever_got_it_right(self):
+        """Rather than re-implementing the PoolStageRule lookup: if anyone
+        called the match, their award is the stage's rate."""
+        rates = build_consensus(self.play({self.alice: 7, self.bob: 0}))
+
+        self.assertEqual(rates[0].points_if_right, 7)
+
+    def vote(self, match, user, outcome, points=0):
+        return Prediction.objects.create(
+            pool=self.pool,
+            match=match,
+            user=user,
+            predicted_outcome=outcome,
+            points_awarded=points,
+            is_processed=True,
+        )
+
+    def ordered_predictions(self):
+        return list(
+            Prediction.objects.filter(pool=self.pool)
+            .select_related("match", "user")
+            .order_by("match__kickoff", "match_id")
+        )
+
+    def test_crowd_is_scored_as_a_player_and_placed_among_them(self):
+        """Every match here is a 1-0 home win, so an AWAY pick is a miss.
+
+        Both players call match 1 and both miss match 2, which makes the
+        crowd's majority right once in two.
+        """
+        first, second = self.match(), self.match()
+        self.vote(first, self.alice, MatchOutcome.HOME_WIN, points=5)
+        self.vote(first, self.bob, MatchOutcome.HOME_WIN, points=5)
+        self.vote(second, self.alice, MatchOutcome.AWAY_WIN)
+        self.vote(second, self.bob, MatchOutcome.AWAY_WIN)
+        predictions = self.ordered_predictions()
+
+        crowd = build_crowd_standing(build_consensus(predictions), final_order(build_rank_history(predictions)))
+
+        self.assertEqual((crowd.points, crowd.correct, crowd.picks, crowd.hit_rate), (5, 1, 2, 50))
+        # Level with both players, so nobody is ahead of it and nobody behind.
+        self.assertEqual((crowd.rank, crowd.beaten, crowd.abstained), (1, 0, 0))
+
+    def test_crowd_is_ranked_below_a_player_who_beat_it(self):
+        first, second = self.match(), self.match()
+        # alice calls both; bob only the first, so the majority follows bob
+        # into the miss on the second.
+        self.vote(first, self.alice, MatchOutcome.HOME_WIN, points=5)
+        self.vote(first, self.bob, MatchOutcome.HOME_WIN, points=5)
+        self.vote(second, self.alice, MatchOutcome.HOME_WIN, points=5)
+        self.vote(second, self.bob, MatchOutcome.AWAY_WIN)
+        self.vote(second, User.objects.create_user(username="dana"), MatchOutcome.AWAY_WIN)
+        predictions = self.ordered_predictions()
+
+        crowd = build_crowd_standing(build_consensus(predictions), final_order(build_rank_history(predictions)))
+
+        self.assertEqual(crowd.points, 5)
+        self.assertEqual(crowd.rank, 2, "alice's 10 points are ahead of the crowd's 5")
+        # bob is level with it on both points and accuracy, so only dana is behind.
+        self.assertEqual(crowd.beaten, 1)
+
+    def test_crowd_abstains_on_a_split_match(self):
+        match = self.match()
+        self.vote(match, self.alice, MatchOutcome.HOME_WIN)
+        self.vote(match, self.bob, MatchOutcome.AWAY_WIN)
+        predictions = self.ordered_predictions()
+
+        crowd = build_crowd_standing(build_consensus(predictions), final_order(build_rank_history(predictions)))
+
+        self.assertEqual((crowd.picks, crowd.abstained), (0, 1))
+
+    def test_streaks_count_consecutive_correct_picks(self):
+        predictions = self.play(
+            {self.alice: 3, self.bob: 0},
+            {self.alice: 3, self.bob: 3},
+            {self.alice: 0, self.bob: 3},
+            {self.alice: 3, self.bob: 3},
+        )
+        names = {self.alice.id: "alice", self.bob.id: "bob"}
+
+        streaks = build_streaks(predictions, names)
+
+        # alice: 2, break, 1. bob: break, then 3.
+        self.assertEqual([(s.name, s.length) for s in streaks], [("bob", 3), ("alice", 2)])
+
+    def test_contrarians_count_picks_against_the_majority(self):
+        match = self.match()
+        carol = User.objects.create_user(username="carol")
+        self.vote(match, self.alice, MatchOutcome.HOME_WIN, points=3)
+        self.vote(match, self.bob, MatchOutcome.HOME_WIN, points=3)
+        self.vote(match, carol, MatchOutcome.AWAY_WIN)
+        predictions = self.ordered_predictions()
+        names = {self.alice.id: "alice", self.bob.id: "bob", carol.id: "carol"}
+
+        rebels = build_contrarians(predictions, build_consensus(predictions), names)
+
+        self.assertEqual([(r.name, r.against, r.right) for r in rebels], [("carol", 1, 0)])
+
+    def test_outcome_mix_compares_picks_against_results(self):
+        """Two matches, both home wins; the pool picked home once and away once."""
+        self.vote(self.match(), self.alice, MatchOutcome.HOME_WIN, points=3)
+        self.vote(self.match(), self.alice, MatchOutcome.AWAY_WIN)
+        predictions = self.ordered_predictions()
+
+        mix = {entry.label: entry for entry in build_outcome_mix(predictions, build_consensus(predictions))}
+
+        self.assertEqual((mix["Home win"].predicted_percent, mix["Home win"].actual_percent), (50, 100))
+        self.assertEqual(mix["Home win"].bias_label, "50 pts under-picked")
+        self.assertEqual((mix["Draw"].predicted_percent, mix["Draw"].actual_percent), (0, 0))
+
+    async def test_the_last_entry_is_the_live_leaderboard(self):
+        """The chart's right-hand edge and the leaderboard are the same table.
+
+        They are computed by different code - one walks predictions in Python,
+        the other aggregates in SQL - so this pins them together.
+        """
+        predictions = await sync_to_async(self.play)(
+            {self.alice: 6, self.bob: 0},
+            {self.alice: 0, self.bob: 6},
+            {self.bob: 0},
+            {self.alice: 3},
+        )
+        history = build_rank_history(predictions)
+
+        live = {user.id: (rank, points) async for rank, user, points in self.pool.aget_leaderboard()}
+        charted = {standing.user_id: (standing.rank, standing.points) for standing in history[-1].standings.values()}
+
+        self.assertEqual(charted, live)
+
+
+class PoolSetupPageTests(TestCase):
+    """Covers the guided setup page in the admin: it has to do everything
+    `manage.py create_pool` does, because a PredictionPool row added on its own
+    has no schedule, no scoring and nowhere to post - and says so nowhere."""
+
+    def setUp(self):
+        self.competition = Competition.objects.create(name="NFL", sport=Sport.AMERICAN_FOOTBALL)
+        self.season = Season.objects.create(name="NFL 2026", competition=self.competition, year=2026)
+        self.stage = Stage.objects.create(
+            season=self.season, name="Regular Season", level=0, stage_type=StageType.LEAGUE
+        )
+        self.other_stage = Stage.objects.create(
+            season=self.season, name="Super Bowl", level=4, stage_type=StageType.KNOCK_OUT
+        )
+        Match.objects.create(
+            stage=self.stage,
+            home_team=Team.objects.create(name="Browns"),
+            away_team=Team.objects.create(name="Vikings"),
+            kickoff=timezone.now() + datetime.timedelta(days=2),
+        )
+
+        self.guild = DiscordGuild.objects.create(id=1, name="Otter Raft")
+        self.channel = DiscordChannel.objects.create(id=10, guild=self.guild, name="bets", channel_type="text")
+        self.role = DiscordGuildRole.objects.create(id=20, guild=self.guild, name="Otters")
+
+        self.other_guild = DiscordGuild.objects.create(id=2, name="Elsewhere")
+        self.other_channel = DiscordChannel.objects.create(
+            id=11, guild=self.other_guild, name="general", channel_type="text"
+        )
+
+        self.admin = User.objects.create_superuser(username="boss", password="x", email="boss@example.com")
+        self.client.force_login(self.admin)
+        self.url = reverse("admin:predictions_predictionpool_setup")
+
+    def payload(self, **overrides):
+        data = {
+            "season": self.season.id,
+            "name": "NFL 2026",
+            "poll_creation_weekdays": ["2", "6"],
+            "poll_creation_time": "18:00",
+            "poll_creation_lookahead_days": 7,
+            "reminder_lead_minutes": 60,
+            "guild": self.guild.id,
+            "channel": self.channel.id,
+            "notification_role": self.role.id,
+        }
+        data.update(overrides)
+        return {key: value for key, value in data.items() if value is not None}
+
+    # -- access ------------------------------------------------------------
+
+    def test_anonymous_is_sent_to_the_login_page(self):
+        self.client.logout()
+
+        self.assertEqual(self.client.get(self.url).status_code, 302)
+
+    def test_staff_without_add_permission_is_refused(self):
+        staff = User.objects.create_user(username="reader", password="x", is_staff=True)
+        self.client.force_login(staff)
+
+        self.assertEqual(self.client.get(self.url).status_code, 403)
+
+    # -- the form ----------------------------------------------------------
+
+    def test_page_reports_the_prerequisites(self):
+        response = self.client.get(self.url)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([check.status for check in response.context["environment"]], [OK, OK])
+
+    def test_missing_prerequisites_are_reported_rather_than_hidden(self):
+        """A fresh install has neither; the page has to say which is missing."""
+        DiscordGuild.objects.all().delete()
+        Stage.objects.all().delete()
+
+        response = self.client.get(self.url)
+
+        self.assertEqual([check.status for check in response.context["environment"]], [FAIL, FAIL])
+
+    def test_creates_the_pool_its_configuration_rules_and_binding(self):
+        response = self.client.post(self.url, self.payload())
+
+        pool = PredictionPool.objects.get(name="NFL 2026")
+        self.assertRedirects(response, f"{self.url}?created={pool.pk}")
+
+        self.assertEqual(pool.season, self.season)
+        self.assertTrue(pool.is_active)
+
+        config = pool.configuration
+        self.assertEqual(config.poll_creation_weekdays, [2, 6])
+        self.assertEqual(config.poll_creation_time, datetime.time(18, 0))
+        self.assertEqual(config.poll_creation_lookahead_days, 7)
+        self.assertEqual(config.reminder_lead_minutes, 60)
+
+        # One rule per stage, or every pick scores the hardcoded fallback.
+        self.assertEqual(
+            set(pool.stage_rules.values_list("stage_id", flat=True)),
+            {self.stage.id, self.other_stage.id},
+        )
+
+        binding = DiscordGuildPool.objects.get(pool=pool)
+        self.assertEqual(
+            (binding.guild, binding.channel, binding.notification_role), (self.guild, self.channel, self.role)
+        )
+        self.assertTrue(binding.is_active)
+
+    def test_weekdays_are_stored_as_integers(self):
+        """The widget hands back strings and the JSON field validator rejects them."""
+        self.client.post(self.url, self.payload(poll_creation_weekdays=["0"]))
+
+        config = PredictionPool.objects.get(name="NFL 2026").configuration
+        self.assertEqual(config.poll_creation_weekdays, [0])
+        config.full_clean()
+
+    def test_binding_is_optional(self):
+        self.client.post(self.url, self.payload(guild=None, channel=None, notification_role=None))
+
+        pool = PredictionPool.objects.get(name="NFL 2026")
+        self.assertFalse(DiscordGuildPool.objects.filter(pool=pool).exists())
+
+    def test_resubmitting_the_same_name_updates_rather_than_duplicating(self):
+        """Same idempotence as the command, so the page is safe to re-run."""
+        self.client.post(self.url, self.payload())
+        self.client.post(self.url, self.payload(reminder_lead_minutes=15))
+
+        pools = PredictionPool.objects.filter(name="NFL 2026")
+        self.assertEqual(pools.count(), 1)
+        self.assertEqual(pools.get().configuration.reminder_lead_minutes, 15)
+        self.assertEqual(DiscordGuildPool.objects.filter(pool=pools.get()).count(), 1)
+
+    # -- validation --------------------------------------------------------
+
+    def test_a_guild_without_a_channel_is_refused(self):
+        """It saves fine and then never posts, which is the most confusing way
+        for a new pool to fail."""
+        response = self.client.post(self.url, self.payload(channel=None))
+
+        self.assertFormError(
+            response.context["form"],
+            "channel",
+            ["A pool bound to a guild needs a channel, or it has nowhere to post."],
+        )
+        self.assertFalse(PredictionPool.objects.exists())
+
+    def test_a_channel_from_another_guild_is_refused(self):
+        response = self.client.post(self.url, self.payload(channel=self.other_channel.id))
+
+        self.assertFormError(response.context["form"], "channel", ["That channel is in Elsewhere, not Otter Raft."])
+
+    def test_a_channel_without_a_guild_is_refused(self):
+        response = self.client.post(self.url, self.payload(guild=None, notification_role=None))
+
+        self.assertFormError(response.context["form"], "guild", ["Pick the guild these belong to."])
+
+    def test_no_weekdays_is_refused(self):
+        """Without one, polls never post at all."""
+        response = self.client.post(self.url, self.payload(poll_creation_weekdays=[]))
+
+        self.assertTrue(response.context["form"].errors["poll_creation_weekdays"])
+        self.assertFalse(PredictionPool.objects.exists())
+
+    def test_lookahead_beyond_discords_maximum_is_refused(self):
+        response = self.client.post(self.url, self.payload(poll_creation_lookahead_days=MAX_POLL_LOOKAHEAD_DAYS + 1))
+
+        self.assertTrue(response.context["form"].errors["poll_creation_lookahead_days"])
+
+    # -- the result --------------------------------------------------------
+
+    def test_the_result_page_shows_the_readiness_report(self):
+        self.client.post(self.url, self.payload())
+        pool = PredictionPool.objects.get(name="NFL 2026")
+        # Without a scheduled ingestion the pool is correctly not ready; the
+        # deploy installs these, so a set-up pool has them.
+        call_command("ensure_schedule", stdout=StringIO())
+
+        response = self.client.get(self.url, {"created": pool.pk})
+
+        self.assertEqual(response.context["created_pool"], pool)
+        self.assertTrue(response.context["report"].is_ready)
+        self.assertContains(response, "Set the points per round")
+
+    # -- guild-scoped pickers ---------------------------------------------
+
+    def test_channel_and_role_options_carry_their_guild(self):
+        """pool_setup.js filters on these; without them it cannot narrow the
+        list, and the page falls back to every channel on every server."""
+        body = self.client.get(self.url).content.decode()
+
+        self.assertIn(f'value="{self.channel.pk}" data-guild="{self.guild.pk}"', body)
+        self.assertIn(f'value="{self.other_channel.pk}" data-guild="{self.other_guild.pk}"', body)
+        self.assertIn(f'value="{self.role.pk}" data-guild="{self.guild.pk}"', body)
+
+    def test_the_page_loads_the_picker_script(self):
+        self.assertContains(self.client.get(self.url), "predictions/js/pool_setup.js")
+
+    def test_options_are_labelled_with_their_guild(self):
+        """The label is what makes the unfiltered list usable with scripting off."""
+        body = self.client.get(self.url).content.decode()
+
+        self.assertIn(f"{self.guild.name} · {self.channel.name}", body)
+
+    def test_the_server_still_rejects_a_mismatched_pair(self):
+        """The filtering is a convenience; this is what keeps the data right."""
+        response = self.client.post(self.url, self.payload(channel=self.other_channel.id))
+
+        self.assertTrue(response.context["form"].errors["channel"])
+        self.assertFalse(DiscordGuildPool.objects.exists())
+
+    def test_the_changelist_links_to_the_guided_page(self):
+        response = self.client.get(reverse("admin:predictions_predictionpool_changelist"))
+
+        self.assertContains(response, self.url)
+
+    def test_the_changelist_reports_readiness_per_pool(self):
+        """A pool with no Discord binding posts nothing and says so nowhere."""
+        pool = PredictionPool.objects.create(name="Unbound", season=self.season)
+        sync_pool_stage_rules(pool)
+
+        response = self.client.get(reverse("admin:predictions_predictionpool_changelist"))
+        body = response.content.decode()
+
+        self.assertIn("no Discord binding", body)
+        self.assertIn(f"{self.url}?created={pool.pk}", body)
+
+
+class ReadinessTests(TestCase):
+    """Covers predictions/readiness.py, shared by check_pool and the admin page."""
+
+    def test_worst_wins(self):
+        self.assertEqual(worst(OK, WARN, OK), WARN)
+        self.assertEqual(worst(WARN, FAIL), FAIL)
+        self.assertEqual(worst(), OK)
+
+    def test_environment_reports_a_bare_install_as_not_ready(self):
+        self.assertEqual([check.status for check in check_environment()], [FAIL, FAIL])
+
+
+class IngestionFreshnessTests(TestCase):
+    """Covers readiness._check_ingestion. The failure it reports is silent by
+    construction: Beat is database-driven, so an unscheduled ingestion task is
+    not an error anywhere - the matches just stop arriving."""
+
+    def setUp(self):
+        self.competition = Competition.objects.create(name="NFL", sport=Sport.AMERICAN_FOOTBALL)
+        self.season = Season.objects.create(name="NFL 2026", competition=self.competition, year=2026)
+        self.pool = PredictionPool.objects.create(name="NFL Pool", season=self.season)
+        self.interval = IntervalSchedule.objects.create(every=120, period=IntervalSchedule.SECONDS)
+
+    def schedule(self, task, *, enabled=True, last_run_at=None):
+        return PeriodicTask.objects.create(
+            name=task, task=task, interval=self.interval, enabled=enabled, last_run_at=last_run_at
+        )
+
+    def checks(self):
+        return {check.label: check for check in check_pool(self.pool).checks}
+
+    def find(self, fragment):
+        return next(check for label, check in self.checks().items() if fragment in label)
+
+    def test_an_unscheduled_critical_task_fails(self):
+        check = self.find("nothing schedules the NFL infrastructure sync")
+
+        self.assertEqual(check.status, FAIL)
+        self.assertIn("ensure_schedule", check.detail)
+
+    def test_an_unscheduled_backstop_only_warns(self):
+        """Losing the nflverse cross-check costs a second opinion, not the pool."""
+        check = self.find("nothing schedules the nflverse results backstop")
+
+        self.assertEqual(check.status, WARN)
+
+    def test_another_sports_tasks_are_not_reported(self):
+        """An NFL pool does not care that the FIFA sync is unscheduled."""
+        self.assertNotIn("nothing schedules the FIFA infrastructure sync", self.checks())
+
+    def test_a_disabled_schedule_warns(self):
+        self.schedule("sports.tasks.sync_nfl_infrastructure", enabled=False)
+
+        self.assertEqual(self.find("NFL infrastructure sync is disabled").status, WARN)
+
+    def test_a_schedule_that_has_never_run_warns(self):
+        self.schedule("sports.tasks.sync_nfl_infrastructure")
+
+        check = self.find("NFL infrastructure sync has never run")
+        self.assertEqual(check.status, WARN)
+        self.assertIn("beat container", check.detail)
+
+    def test_a_recent_run_passes(self):
+        self.schedule(
+            "sports.tasks.sync_nfl_infrastructure",
+            last_run_at=timezone.now() - datetime.timedelta(hours=2),
+        )
+
+        check = self.find("NFL infrastructure sync ran")
+        self.assertEqual(check.status, OK)
+        self.assertIn("2h ago", check.label)
+
+    def test_a_stale_run_warns(self):
+        """Three missed daily cycles is not a hiccup."""
+        self.schedule(
+            "sports.tasks.sync_nfl_infrastructure",
+            last_run_at=timezone.now() - datetime.timedelta(days=5),
+        )
+
+        check = self.find("NFL infrastructure sync last ran")
+        self.assertEqual(check.status, WARN)
+        self.assertIn("5d ago", check.label)
+
+    def test_a_frequent_task_gets_a_grace_floor(self):
+        """A two-minute task is not stale after six minutes of a slow worker."""
+        self.schedule(
+            "sports.tasks.sync_nfl_live_games",
+            last_run_at=timezone.now() - datetime.timedelta(minutes=10),
+        )
+
+        self.assertEqual(self.find("NFL live match sync ran").status, OK)
+
+    def test_a_failing_task_is_reported_even_though_beat_keeps_dispatching(self):
+        self.schedule(
+            "sports.tasks.sync_nfl_infrastructure",
+            last_run_at=timezone.now() - datetime.timedelta(hours=1),
+        )
+        TaskResult.objects.create(
+            task_id="abc",
+            task_name="sports.tasks.sync_nfl_infrastructure",
+            status="FAILURE",
+            result="ConnectionError: ESPN is unreachable",
+        )
+
+        check = self.find("the last recorded NFL infrastructure sync failed")
+        self.assertEqual(check.status, WARN)
+        self.assertIn("ESPN is unreachable", check.detail)

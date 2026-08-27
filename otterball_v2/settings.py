@@ -52,7 +52,9 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
-    "whitenoise.middleware.WhiteNoiseMiddleware",
+    # WhiteNoise, extended to serve MEDIA_ROOT as well - there is no proxy in
+    # front of gunicorn to do it.
+    "otterball_v2.middleware.WhiteNoiseWithMediaMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -146,6 +148,14 @@ STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "static"
 MEDIA_URL = "media/"
 MEDIA_ROOT = BASE_DIR / "media"
+
+# WhiteNoise builds its file index once, at startup. That is fine for
+# STATIC_ROOT, which collectstatic fills before gunicorn boots, but crests land
+# in MEDIA_ROOT whenever ingestion meets a team it has not seen - written by the
+# worker container into the volume the web container is already serving from.
+# Without this, a crest downloaded after boot 404s until `web` restarts.
+# The cost is a couple of stat() calls per request instead of a dict lookup.
+WHITENOISE_AUTOREFRESH = True
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://127.0.0.1:6379/1")
 

@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+
+{% block title %}{{ season.name }} · Leaderboard — Otterball{% endblock %}
+
+{% block content %}
+    <div class="page-head">
+        <h1>{{ season.name }}</h1>
+        <p>{{ season.competition.name }} · standings</p>
+        <nav class="view-tabs" aria-label="Views">
+            <a class="pill" href="{% url 'sports:season-matches' season.id %}">Fixtures</a>
+            {% if has_bracket %}
+                <a class="pill" href="{% url 'sports:season-bracket' season.id %}">Bracket</a>
+            {% endif %}
+            <a class="pill" aria-current="page" href="{% url 'sports:season-leaderboard' season.id %}">Leaderboard</a>
+            <a class="pill" href="{% url 'sports:season-stats' season.id %}">Stats</a>
+        </nav>
+    </div>
+
+    {% for board in boards %}
+        <section class="board">
+            <div class="board-head">
+                <h2>{{ board.pool.name }}</h2>
+                {% if not board.pool.is_active %}<span class="badge">Closed</span>{% endif %}
+            </div>
+
+            {% if board.rows %}
+                <div class="board-body">
+                    <div class="table-scroll">
+                        <table class="standings">
+                            <thead>
+                            <tr>
+                                <th scope="col" class="col-rank">#</th>
+                                <th scope="col">Player</th>
+                                <th scope="col" class="num">Picks</th>
+                                <th scope="col" class="num">Correct</th>
+                                <th scope="col" class="num">Hit rate</th>
+                                <th scope="col" class="num">Points</th>
+                            </tr>
+                            </thead>
+                            <tbody>
+                            {% for row in board.rows %}
+                                <tr{% if row.rank == 1 %} class="leader"{% endif %}>
+                                    <td class="col-rank">{{ row.rank }}</td>
+                                    <th scope="row" class="player">{{ row.name }}</th>
+                                    <td class="num">{{ row.picks }}</td>
+                                    <td class="num">{{ row.correct }}</td>
+                                    <td class="num rate">{{ row.hit_rate }}%</td>
+                                    <td class="num points">{{ row.points }}</td>
+                                </tr>
+                            {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+
+                    {% if board.rules %}
+                        <aside class="rules" aria-label="Points per round">
+                            <h3>Points per round</h3>
+                            <dl>
+                                {% for rule in board.rules %}
+                                    <div>
+                                        <dt>{{ rule.stage.name|default:"All rounds" }}</dt>
+                                        <dd>{{ rule.points_per_correct }}</dd>
+                                    </div>
+                                {% endfor %}
+                            </dl>
+                        </aside>
+                    {% endif %}
+                </div>
+            {% else %}
+                <div class="empty">
+                    <p>No picks yet.</p>
+                    <p>The table fills in as people vote on the polls in Discord.</p>
+                </div>
+            {% endif %}
+        </section>
+    {% empty %}
+        <div class="empty">
+            <p>No pool plays this season.</p>
+            <p>Create one with <code>manage.py create_pool</code> and its standings appear here.</p>
+        </div>
+    {% endfor %}
+
+    {% if boards %}
+        <p class="footnote">
+            Ranked on points, then on <strong>hit rate</strong> — points reward turning up as much
+            as being right, so two players level on points are separated by the share of their picks
+            that were right. Level on both share a rank and the next rank skips accordingly, so they
+            are both 2nd and the next is 4th. Same ranking as the pinned Discord leaderboard.
+            <strong>Correct</strong> counts picks that scored; the ranking compares the unrounded
+            ratio, so two rows can show the same percentage and still be ordered.
+        </p>
+    {% endif %}
+{% endblock %}

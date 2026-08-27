@@ -1,0 +1,13 @@
+{% extends "admin/change_list.html" %}
+
+{% block object-tools-items %}
+    {% comment %}
+        The guided page ahead of the plain "Add" button: adding a PredictionPool
+        row on its own leaves it with no schedule, no scoring and no Discord
+        binding, and none of those announce themselves as missing.
+    {% endcomment %}
+    <li>
+        <a href="{% url 'admin:predictions_predictionpool_setup' %}" class="addlink">Start a new pool</a>
+    </li>
+    {{ block.super }}
+{% endblock %}

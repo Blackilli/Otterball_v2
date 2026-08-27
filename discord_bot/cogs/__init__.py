@@ -1,4 +1,5 @@
 from .channel_sync import ChannelSyncCog
+from .guild_sync import GuildSyncCog
 from .leaderboard_sync import LeaderboardSyncCog
 from .match_ticker import MatchTickerCog
 from .notification_prefs import NotificationPreferenceCog
@@ -10,6 +11,7 @@ from .role_sync import RoleSyncCog
 
 __all__ = [
     "ChannelSyncCog",
+    "GuildSyncCog",
     "MatchTickerCog",
     "NotificationPreferenceCog",
     "PollPredictionCog",

@@ -31,6 +31,26 @@ class User(AbstractUser):
     discord_profile: DiscordProfile | None
 
     @property
+    def display_name(self) -> str:
+        """What to call this user on screen.
+
+        The Discord global name first, because that is the name people know
+        each other by in the pool channel and the one the bot's leaderboard
+        message uses - a web leaderboard listing different names than the
+        pinned one would read as a different scoreboard.
+
+        Reaches the profile through the reverse accessor rather than importing
+        discord_bot, which depends on this app and not the other way round.
+        Callers rendering more than one user should `select_related`
+        ("discord_profile") or this is a query per row.
+        """
+        try:
+            profile = self.discord_profile
+        except ObjectDoesNotExist:
+            return self.username
+        return profile.global_name or profile.username or self.username
+
+    @property
     def is_discord_linked(self) -> bool:
         try:
             return self.discord_profile is not None

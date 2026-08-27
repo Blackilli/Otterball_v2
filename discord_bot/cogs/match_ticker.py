@@ -1,6 +1,6 @@
 import asyncio
+import contextlib
 import datetime
-import json
 import logging
 
 import discord
@@ -10,6 +10,8 @@ from discord.utils import format_dt
 from django.conf import settings
 from django.db.models import Max, Q
 from django.utils import timezone
+from pydantic import ValidationError
+from redis.exceptions import RedisError
 
 from discord_bot.components import MatchStatusView, TeamRow
 from discord_bot.models import (
@@ -35,6 +37,11 @@ MAX_MENTIONS = 40
 # marker on every in-progress row was more noise than signal. A finished match
 # is the one place a marker earns its keep.
 WINNER_MARKER = "\N{TROPHY}"
+
+# How long to wait before resubscribing after the Redis subscription drops.
+# Short enough that a restarted valkey is picked up quickly, long enough that a
+# valkey that is down does not fill the log.
+PUBSUB_RETRY_SECONDS = 10
 
 # Statuses after which nothing more will happen to the match.
 FINAL_STATUSES = (MatchStatus.FINISHED, MatchStatus.POSTPONED, MatchStatus.CANCELLED)
@@ -135,15 +142,26 @@ class MatchTickerCog(commands.Cog):
     async def before_state_sync_loop(self) -> None:
         await self.bot.wait_until_ready()
 
-    @tasks.loop(count=1)
+    @tasks.loop(seconds=PUBSUB_RETRY_SECONDS)
     async def pubsub_loop(self):
+        """Subscribe to match updates, and keep subscribing.
+
+        The interval is a *reconnect* delay, not a poll: the body blocks on the
+        subscription until it fails, and returning lets the loop re-enter and
+        resubscribe. It used to be `count=1`, so any error ended it for good -
+        and discord.py only auto-retries OSError, GatewayNotFound,
+        ConnectionClosed, aiohttp.ClientError and TimeoutError, none of which a
+        `redis.RedisError` is. One Redis blip meant no live scores until the
+        bot was restarted, silently: the minute loop kept working, so the only
+        symptom was updates arriving up to a minute late forever.
+        """
         logger.info("📻 Launching asynchronous Redis Pub/Sub subscriber context...")
 
         redis_connection = aioredis.from_url(settings.REDIS_URL)
         pubsub = redis_connection.pubsub()
-        await pubsub.subscribe(settings.REDIS_MATCH_UPDATE_TOPIC)
 
         try:
+            await pubsub.subscribe(settings.REDIS_MATCH_UPDATE_TOPIC)
             while True:
                 message = await pubsub.get_message(
                     ignore_subscribe_messages=True,
@@ -158,18 +176,29 @@ class MatchTickerCog(commands.Cog):
                     raw_data = message["data"].decode("utf-8")
 
                     event = MatchUpdatePayload.model_validate_json(raw_data)
-
-                    self.bot.loop.create_task(self.process_live_update(event))
-
-                except (json.JSONDecodeError, UnicodeDecodeError, KeyError) as e:
+                except (UnicodeDecodeError, KeyError, ValidationError) as e:
+                    # A malformed message is not worth dropping the
+                    # subscription for. ValidationError is what pydantic
+                    # actually raises here - the json.JSONDecodeError this used
+                    # to catch never fires.
                     logger.error(f"Error decoding Redis message: {e}")
                     continue
 
+                self.bot.loop.create_task(self.process_live_update(event))
+
         except asyncio.CancelledError:
             logger.warning("Redis subscription loop requested shutdown. Cleaning connections...")
-            await pubsub.unsubscribe()
-            await redis_connection.close()
-            logger.info("Redis subscriber channel cleanly disconnected.")
+            raise
+        except (RedisError, OSError) as e:
+            logger.error(f"Redis subscription dropped, resubscribing in {PUBSUB_RETRY_SECONDS}s: {e}")
+        finally:
+            # aclose() rather than the deprecated close(); suppressed because a
+            # connection that has already failed will often fail to close too,
+            # and that must not mask the error above or block the retry.
+            with contextlib.suppress(Exception):
+                await pubsub.aclose()
+            with contextlib.suppress(Exception):
+                await redis_connection.aclose()
 
     @pubsub_loop.before_loop
     async def before_pubsub_loop(self) -> None:

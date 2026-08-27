@@ -1,0 +1,55 @@
+{% comment %}
+One match card, shared by the fixture list and the bracket.
+
+`show_votes` turns the prediction split on; every page that uses this card
+attaches one. On a result the winning segment is marked and the rest step
+back, so the bar reads as who called it rather than as an open poll.
+{% endcomment %}
+<article class="match">
+    <p class="match-meta">
+        <span class="stage">{{ match.stage.name }}</span>
+        {% if match.status == "LIVE" %}
+            <span class="badge badge-live">Live</span>
+        {% elif match.status == "POSTPONED" %}
+            <span class="badge badge-postponed">Postponed</span>
+        {% elif match.status == "CANCELLED" %}
+            <span class="badge badge-cancelled">Cancelled</span>
+        {% endif %}
+        <time class="kickoff" datetime="{{ match.kickoff|date:'c' }}">
+            {{ match.kickoff|date:"D, d M · H:i" }}
+        </time>
+    </p>
+
+    <div class="team-row {% if match.outcome == 'HOME' %}winner{% elif match.outcome == 'AWAY' %}loser{% endif %}">
+        {% include "sports/_crest.html" with team=match.home_team %}
+        <span class="name">{{ match.home_team.name }}</span>
+        <span class="score">{% if match.home_score is not None %}{{ match.home_score }}{% else %}–{% endif %}</span>
+    </div>
+    <div class="team-row {% if match.outcome == 'AWAY' %}winner{% elif match.outcome == 'HOME' %}loser{% endif %}">
+        {% include "sports/_crest.html" with team=match.away_team %}
+        <span class="name">{{ match.away_team.name }}</span>
+        <span class="score">{% if match.away_score is not None %}{{ match.away_score }}{% else %}–{% endif %}</span>
+    </div>
+
+    {% if show_votes and match.vote_total %}
+        <div class="votes">
+            <div class="vote-bar{% if match.outcome %} has-result{% endif %}" role="img"
+                 aria-label="Predictions: {% for share in match.vote_split %}{{ share.label }} {{ share.percent }}%{% if share.is_correct %} (correct){% endif %}{% if not forloop.last %}, {% endif %}{% endfor %}">
+                {% for share in match.vote_split %}
+                    <span class="{{ share.css_class }}{% if share.is_correct %} is-correct{% endif %}"
+                          style="flex: {{ share.count }} 0 0"></span>
+                {% endfor %}
+            </div>
+            <ul class="vote-legend">
+                {% for share in match.vote_split %}
+                    <li{% if share.is_correct %} class="is-correct"{% endif %}>
+                        <span class="swatch {{ share.css_class }}"></span>
+                        {% if share.is_correct %}<span class="tick" role="img" aria-label="correct">✓</span>{% endif %}
+                        {{ share.label }}
+                        <span class="count">{{ share.count }}</span>
+                    </li>
+                {% endfor %}
+            </ul>
+        </div>
+    {% endif %}
+</article>

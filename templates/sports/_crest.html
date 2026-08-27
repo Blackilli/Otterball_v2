@@ -1,0 +1,14 @@
+{% comment %}
+A team's crest. `logo` is the local copy ingestion downloaded; `logo_url` is
+the provider's own URL and covers a team ingested but not yet fetched. With
+neither, initials on the team's colour - never an empty box.
+{% endcomment %}
+{% if team.logo %}
+    <img class="crest" src="{{ team.logo.url }}" alt="" width="26" height="26" loading="lazy">
+{% elif team.logo_url %}
+    <img class="crest" src="{{ team.logo_url }}" alt="" width="26" height="26" loading="lazy">
+{% else %}
+    <span class="crest crest-fallback" style="background: {{ team.color }}" aria-hidden="true">
+        {{ team.name|slice:":3"|upper }}
+    </span>
+{% endif %}

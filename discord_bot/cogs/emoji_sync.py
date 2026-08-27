@@ -60,6 +60,10 @@ class EmojiSyncCog(commands.Cog):
         if self._sync_in_progress:
             logger.info("Emoji sync already in progress, skipping.")
             return
+        # Armed here, not just cleared in the finally below - without this the
+        # guard never held, and on_ready fires again on every gateway reconnect,
+        # so two syncs could register the same emoji at once.
+        self._sync_in_progress = True
         logger.info("Emoji sync started.")
 
         try:

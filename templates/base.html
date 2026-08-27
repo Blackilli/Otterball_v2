@@ -1,0 +1,44 @@
+{% load static %}<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}Otterball{% endblock %}</title>
+    <link rel="stylesheet" href="{% static 'sports/css/site.css' %}">
+</head>
+<body>
+<header class="site-header">
+    <div class="wrap">
+        <p class="site-title"><a href="{% url 'sports:upcoming-matches' %}">Otterball</a></p>
+        {% if seasons %}
+            <nav class="season-nav" aria-label="Seasons">
+                {% for option in seasons %}
+                    <a class="pill"
+                       href="{% url 'sports:season-matches' option.id %}"
+                       {% if season and option.id == season.id %}aria-current="page"{% endif %}>
+                        {% comment %}
+                            Season names are self-describing in every ingestion path
+                            ("NFL 2026", "FIFA World Cup 2026™"), so the year is not
+                            repeated here.
+                        {% endcomment %}
+                        {{ option.name }}
+                    </a>
+                {% endfor %}
+            </nav>
+        {% endif %}
+    </div>
+</header>
+
+<main>
+    <div class="wrap">
+        {% block content %}{% endblock %}
+    </div>
+    {% comment %}
+        Anything that wants the viewport rather than the 1100px reading
+        column - the bracket, which is wider than any column can be.
+    {% endcomment %}
+    {% block wide %}{% endblock %}
+</main>
+{% block scripts %}{% endblock %}
+</body>
+</html>

@@ -47,12 +47,14 @@ class ReconciliationCog(commands.Cog):
                     },
                 )
 
-                await DiscordChannel.objects.filter(
-                    guild_id=guild_row.id,
-                    is_active=True,
-                ).exclude(
-                    id__in=live_channel_ids,
-                ).aupdate(is_active=False)
+            # Once per guild, not once per channel: nested in the loop above
+            # this ran the same UPDATE for every channel the guild has.
+            await DiscordChannel.objects.filter(
+                guild_id=guild_row.id,
+                is_active=True,
+            ).exclude(
+                id__in=live_channel_ids,
+            ).aupdate(is_active=False)
 
     async def reconcile_roles(self):
         for guild in self.bot.guilds:
@@ -76,12 +78,14 @@ class ReconciliationCog(commands.Cog):
                     },
                 )
 
-                await DiscordGuildRole.objects.filter(
-                    guild_id=guild_row.id,
-                    is_active=True,
-                ).exclude(
-                    id__in=live_role_ids,
-                ).aupdate(is_active=False)
+            # Once per guild, not once per role: nested in the loop above
+            # this ran the same UPDATE for every role the guild has.
+            await DiscordGuildRole.objects.filter(
+                guild_id=guild_row.id,
+                is_active=True,
+            ).exclude(
+                id__in=live_role_ids,
+            ).aupdate(is_active=False)
 
     async def reconcile_active_polls(self):
         profile_cache = await aget_discord_profile_cache()

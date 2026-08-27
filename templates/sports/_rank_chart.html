@@ -1,0 +1,84 @@
+{% comment %}
+The rank-over-time chart. Geometry comes from sports/charts.py, so the lines,
+axes and player labels are all in the markup - script only adds the hover
+crosshair, and the chart is complete without it.
+
+Rank runs top-down: 1st is at the top, which is the only direction that reads.
+{% endcomment %}
+<figure class="chart" data-rank-chart data-chart-id="{{ chart.dom_id }}">
+    <figcaption>
+        Rank after every scored match. The leading {{ chart.named|length }} of
+        {{ chart.total_players }} players are named; the rest of the field is the faint band behind
+        them, so whoever led at any point is on the chart even when they did not finish there.
+    </figcaption>
+
+    <div class="chart-frame">
+        <svg viewBox="0 0 {{ chart.width }} {{ chart.height }}" class="rank-chart"
+             role="img" aria-label="Rank over time for {{ chart.total_players }} players, with the leading {{ chart.named|length }} named.">
+            <g class="grid">
+                {% for y, rank in chart.y_ticks %}
+                    <line x1="{{ chart.plot_left }}" x2="{{ chart.plot_right }}" y1="{{ y }}" y2="{{ y }}"></line>
+                    <text x="{{ chart.plot_left|add:'-10' }}" y="{{ y }}" class="axis-label y">{{ rank }}</text>
+                {% endfor %}
+            </g>
+
+            <g class="axis-x">
+                {% for x, label in chart.x_ticks %}
+                    <text x="{{ x }}" y="{{ chart.plot_bottom|add:'22' }}" class="axis-label x">{{ label }}</text>
+                {% endfor %}
+            </g>
+
+            {% comment %}
+                Drawn back to front: the whole field, then the unnamed rest of
+                the top ten, then the coloured five. A highlighted line must
+                never end up underneath a grey one.
+            {% endcomment %}
+            {% for series in chart.field %}
+                <polyline class="line series-field" points="{{ series.polyline }}"></polyline>
+            {% endfor %}
+            {% for series in chart.named %}
+                {% if not series.slot %}
+                    <polyline class="line series-context" points="{{ series.polyline }}"></polyline>
+                {% endif %}
+            {% endfor %}
+            {% for series in chart.coloured %}
+                <polyline class="line {{ series.css_class }}" points="{{ series.polyline }}"></polyline>
+            {% endfor %}
+
+            {% comment %}
+                Direct labels: what lets a reader name a line without consulting
+                the legend, and what the palette's light-mode contrast warning
+                requires as relief.
+            {% endcomment %}
+            {% for series in chart.named %}
+                <text x="{{ series.label_x }}" y="{{ series.label_y }}"
+                      class="line-label {{ series.css_class }}">{{ series.name|truncatechars:16 }}</text>
+            {% endfor %}
+
+            <g class="crosshair" hidden>
+                <line y1="{{ chart.plot_top }}" y2="{{ chart.plot_bottom }}"></line>
+            </g>
+            <rect class="hover-target" x="{{ chart.plot_left }}" y="{{ chart.plot_top }}"
+                  width="{{ chart.plot_width }}" height="{{ chart.plot_height }}"></rect>
+        </svg>
+        <div class="chart-tooltip" hidden></div>
+    </div>
+
+    <ul class="chart-legend">
+        {% for series in chart.coloured %}
+            <li><span class="swatch {{ series.css_class }}"></span>{{ series.name|truncatechars:20 }}</li>
+        {% endfor %}
+        {% if chart.has_context_series %}
+            <li><span class="swatch series-context"></span>rest of the top {{ chart.named|length }}</li>
+        {% endif %}
+        {% if chart.has_field_series %}
+            <li><span class="swatch series-field"></span>rest of the field</li>
+        {% endif %}
+    </ul>
+
+    {% comment %}
+        json_script escapes the payload for a <script> context; the module
+        reads it by the id the view minted for this pool.
+    {% endcomment %}
+    {{ chart.payload|json_script:chart.dom_id }}
+</figure>

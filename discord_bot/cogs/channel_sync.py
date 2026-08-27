@@ -21,7 +21,10 @@ class ChannelSyncCog(commands.Cog):
         await DiscordChannel.objects.aupdate_or_create(
             id=channel.id,
             defaults={
-                "id": guild_row.id,
+                # guild_id, not id: writing the guild's snowflake over the
+                # channel's own primary key left guild_id null and the insert
+                # failed on every channel created while the bot was running.
+                "guild_id": guild_row.id,
                 "name": channel.name,
                 "channel_type": str(channel.type),
                 "is_active": True,

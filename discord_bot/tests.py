@@ -1,13 +1,22 @@
 import datetime
 
 import discord
+from asgiref.sync import async_to_sync, sync_to_async
 from django.contrib.auth import get_user_model
+from django.db import connection
 from django.test import TestCase
+from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
+from discord_bot.cogs.channel_sync import ChannelSyncCog
+from discord_bot.cogs.emoji_sync import EmojiSyncCog
+from discord_bot.cogs.guild_sync import GuildSyncCog
+from discord_bot.cogs.leaderboard_sync import LeaderboardSyncCog
 from discord_bot.cogs.match_ticker import MatchTickerCog
+from discord_bot.cogs.poll_creation import matches_needing_polls
 from discord_bot.cogs.reconciliation import ReconciliationCog
 from discord_bot.cogs.remove_garbage import RemoveGarbageCog
+from discord_bot.cogs.role_sync import RoleSyncCog
 from discord_bot.components import FIGURE_SPACE, HALF_DIGIT, MuteRemindersButton
 from discord_bot.constants import DISCORD_POLL_ANSWER_ORDER_MAP
 from discord_bot.models import (
@@ -20,7 +29,7 @@ from discord_bot.models import (
     MatchMessageState,
     PoolNotificationPreference,
 )
-from discord_bot.services import aset_missing_vote_reminders
+from discord_bot.services import aget_or_create_profile, aset_missing_vote_reminders
 from predictions.models import DEFAULT_REMINDER_LEAD_MINUTES, PoolConfiguration, Prediction, PredictionPool
 from sports.models import Competition, Match, MatchOutcome, MatchStatus, Season, Stage, StageType, Team
 
@@ -62,6 +71,21 @@ class FakePoll:
 class FakeMessage:
     def __init__(self, poll):
         self.poll = poll
+
+
+class FakeLeaderboardMessage:
+    """The pinned leaderboard message: records what it was edited with."""
+
+    def __init__(self, message_id=900, pinned=True):
+        self.id = message_id
+        self.pinned = pinned
+        self.edits = []
+
+    async def pin(self):
+        self.pinned = True
+
+    async def edit(self, **kwargs):
+        self.edits.append(kwargs)
 
 
 class FakeChannel(discord.abc.Messageable):
@@ -1301,3 +1325,433 @@ class ReminderStaysInSyncTests(TestCase):
         self.assertEqual(reference.message_id, 30)
         # A deleted poll must not stop the status message going out.
         self.assertFalse(reference.fail_if_not_exists)
+
+
+class LeaderboardMessageTests(TestCase):
+    """Covers the pinned leaderboard embed: it carries each player's hit rate
+    next to their points, and reads both off the same generator the website
+    does so the two cannot disagree."""
+
+    def setUp(self):
+        self.competition = Competition.objects.create(name="World Cup")
+        self.season = Season.objects.create(name="2026 World Cup", competition=self.competition, year=2026)
+        self.stage = Stage.objects.create(season=self.season, name="Group A", stage_type=StageType.GROUP, level=1)
+        self.home_team = Team.objects.create(name="Germany")
+        self.away_team = Team.objects.create(name="Brazil")
+        self.pool = PredictionPool.objects.create(name="Test Pool", season=self.season)
+
+        self.guild = DiscordGuild.objects.create(id=1, name="Test Guild")
+        self.channel = DiscordChannel.objects.create(id=10, guild=self.guild, name="general", channel_type="text")
+        self.guild_pool = DiscordGuildPool.objects.create(
+            guild=self.guild,
+            channel=self.channel,
+            pool=self.pool,
+            is_active=True,
+            leaderboard_msg=900,
+        )
+        self.message = FakeLeaderboardMessage()
+
+    def player(self, username, global_name, awards):
+        """One prediction per award, so a 0 is a pick that was made and missed."""
+        user = User.objects.create_user(username=username)
+        DiscordProfile.objects.create(
+            id=abs(hash(username)) % 10**17, user=user, username=username, global_name=global_name
+        )
+        for points in awards:
+            match = Match.objects.create(
+                stage=self.stage,
+                home_team=self.home_team,
+                away_team=self.away_team,
+                kickoff=timezone.now(),
+                status=MatchStatus.FINISHED,
+                home_score=1,
+                away_score=0,
+            )
+            Prediction.objects.create(
+                pool=self.pool,
+                match=match,
+                user=user,
+                predicted_outcome=MatchOutcome.HOME_WIN,
+                points_awarded=points,
+                is_processed=True,
+            )
+        return user
+
+    async def render(self):
+        """Run the cog against the fakes and hand back the leaderboard embed."""
+        bot = FakeBot(channel=FakeChannel(message=self.message), guilds=[FakeGuild(self.guild.id, "Test Guild")])
+        cog = LeaderboardSyncCog(bot=bot)
+        cog.cog_unload()  # the 30s loop has nothing to do with rendering
+
+        # select_related, as the real loop does: touching guild_pool.pool
+        # lazily inside the coroutine would be a sync ORM call on the loop.
+        guild_pool = await DiscordGuildPool.objects.select_related("pool").aget(pk=self.guild_pool.pk)
+        await cog.update_leaderboard_msg(guild_pool)
+
+        self.assertEqual(len(self.message.edits), 1)
+        return self.message.edits[0]["embeds"][0]
+
+    async def test_each_line_carries_points_and_hit_rate(self):
+        await sync_to_async(self.player)("alice", "Alice", [4, 4])
+        await sync_to_async(self.player)("bob", "Bob", [8, 0, 0])
+
+        embed = await self.render()
+        lines = [line for field in embed.fields for line in field.value.splitlines() if line.strip()]
+
+        self.assertIn("**Alice** (8 · 100%)", lines)
+        self.assertIn("**Bob** (8 · 33%)", lines)
+
+    async def test_the_footer_says_what_the_two_numbers_are(self):
+        await sync_to_async(self.player)("alice", "Alice", [4])
+
+        embed = await self.render()
+
+        self.assertEqual(embed.footer.text, "points · hit rate")
+
+    async def test_accuracy_orders_players_level_on_points(self):
+        """Same 8 points, and the embed must put the sharper player first."""
+        await sync_to_async(self.player)("bob", "Bob", [8, 0, 0])
+        await sync_to_async(self.player)("alice", "Alice", [4, 4])
+
+        embed = await self.render()
+        names = [field.value for field in embed.fields]
+
+        self.assertEqual(embed.fields[0].name, "———`1`———")
+        self.assertIn("Alice", names[0])
+        self.assertIn("Bob", names[1])
+
+    async def test_a_changed_hit_rate_alone_redraws_the_message(self):
+        """Accuracy is in the fingerprint, so a pick that moves it but not the
+        points total must not be skipped as 'unchanged'."""
+        alice = await sync_to_async(self.player)("alice", "Alice", [4, 4])
+        await self.render()
+
+        # A missed pick: same points, worse accuracy.
+        match = await Match.objects.acreate(
+            stage=self.stage,
+            home_team=self.home_team,
+            away_team=self.away_team,
+            kickoff=timezone.now(),
+            status=MatchStatus.FINISHED,
+            home_score=1,
+            away_score=0,
+        )
+        await Prediction.objects.acreate(
+            pool=self.pool,
+            match=match,
+            user=alice,
+            predicted_outcome=MatchOutcome.AWAY_WIN,
+            points_awarded=0,
+            is_processed=True,
+        )
+
+        bot = FakeBot(channel=FakeChannel(message=self.message), guilds=[FakeGuild(self.guild.id, "Test Guild")])
+        cog = LeaderboardSyncCog(bot=bot)
+        cog.cog_unload()
+        guild_pool = await DiscordGuildPool.objects.select_related("pool").aget(pk=self.guild_pool.pk)
+        await cog.update_leaderboard_msg(guild_pool)
+
+        self.assertEqual(len(self.message.edits), 2)
+        embed = self.message.edits[1]["embeds"][0]
+        self.assertIn("**Alice** (8 · 67%)", embed.fields[0].value)
+
+
+class FakeDiscordGuild:
+    """A discord.Guild as far as the sync cogs are concerned."""
+
+    def __init__(self, guild_id, name="Test Guild", channels=(), roles=()):
+        self.id = guild_id
+        self.name = name
+        self.channels = list(channels)
+        self.roles = list(roles)
+
+
+class FakeGuildChannel:
+    def __init__(self, channel_id, guild, name="general", position=0):
+        self.id = channel_id
+        self.guild = guild
+        self.name = name
+        self.position = position
+        self.type = "text"
+
+
+class FakeGuildRole:
+    def __init__(self, role_id, guild, name="Otters", position=0):
+        self.id = role_id
+        self.guild = guild
+        self.name = name
+        self.position = position
+
+
+class GuildSyncCogTests(TestCase):
+    """These handlers used `guild_id=` on a model whose primary key is `id`,
+    so both raised FieldError - and the cog was never registered, which is why
+    nobody noticed."""
+
+    def setUp(self):
+        self.cog = GuildSyncCog(bot=FakeBot())
+
+    async def test_joining_a_guild_records_it(self):
+        await self.cog.on_guild_join(FakeDiscordGuild(42, "Otter Raft"))
+
+        guild = await DiscordGuild.objects.aget(id=42)
+        self.assertEqual(guild.name, "Otter Raft")
+
+    async def test_joining_again_updates_the_name(self):
+        await DiscordGuild.objects.acreate(id=42, name="Old")
+
+        await self.cog.on_guild_join(FakeDiscordGuild(42, "New"))
+
+        self.assertEqual((await DiscordGuild.objects.aget(id=42)).name, "New")
+
+    async def test_leaving_deactivates_rather_than_deletes(self):
+        """DiscordGuildPool and ActiveMatchMessage both cascade off the guild,
+        so deleting the row would take the pool binding and every poll it ever
+        posted with it - for what is often a temporary removal."""
+        guild = await DiscordGuild.objects.acreate(id=42, name="Otter Raft")
+        channel = await DiscordChannel.objects.acreate(id=1, guild=guild, name="c", channel_type="text")
+        role = await DiscordGuildRole.objects.acreate(id=2, guild=guild, name="r")
+        competition = await Competition.objects.acreate(name="C")
+        season = await Season.objects.acreate(name="S", competition=competition, year=2026)
+        pool = await PredictionPool.objects.acreate(name="P", season=season)
+        binding = await DiscordGuildPool.objects.acreate(guild=guild, pool=pool, channel=channel)
+
+        await self.cog.on_guild_remove(FakeDiscordGuild(42))
+
+        self.assertTrue(await DiscordGuild.objects.filter(id=42).aexists())
+        self.assertFalse((await DiscordGuildPool.objects.aget(pk=binding.pk)).is_active)
+        self.assertFalse((await DiscordChannel.objects.aget(pk=channel.pk)).is_active)
+        self.assertFalse((await DiscordGuildRole.objects.aget(pk=role.pk)).is_active)
+
+
+class ChannelSyncCogTests(TestCase):
+    """on_guild_channel_create wrote the guild's snowflake over the channel's
+    own primary key, leaving guild_id null - every new channel raised."""
+
+    def setUp(self):
+        self.cog = ChannelSyncCog(bot=FakeBot())
+        self.guild_row = DiscordGuild.objects.create(id=42, name="Otter Raft")
+        self.guild = FakeDiscordGuild(42)
+
+    async def test_a_new_channel_is_recorded_under_its_own_id(self):
+        await self.cog.on_guild_channel_create(FakeGuildChannel(777, self.guild, name="bets", position=3))
+
+        channel = await DiscordChannel.objects.aget(id=777)
+        self.assertEqual((channel.guild_id, channel.name, channel.position), (42, "bets", 3))
+
+    async def test_a_channel_in_an_unknown_guild_is_ignored(self):
+        await self.cog.on_guild_channel_create(FakeGuildChannel(778, FakeDiscordGuild(999)))
+
+        self.assertFalse(await DiscordChannel.objects.filter(id=778).aexists())
+
+    async def test_deleting_a_channel_deactivates_it(self):
+        await DiscordChannel.objects.acreate(id=777, guild=self.guild_row, name="bets", channel_type="text")
+
+        await self.cog.on_guild_channel_delete(FakeGuildChannel(777, self.guild))
+
+        self.assertFalse((await DiscordChannel.objects.aget(id=777)).is_active)
+
+
+class RoleSyncCogTests(TestCase):
+    """on_guild_role_create looked the guild up in the *role* table, so it
+    always missed and returned early - new roles were silently never stored."""
+
+    def setUp(self):
+        self.cog = RoleSyncCog(bot=FakeBot())
+        self.guild_row = DiscordGuild.objects.create(id=42, name="Otter Raft")
+        self.guild = FakeDiscordGuild(42)
+
+    async def test_a_new_role_is_recorded(self):
+        await self.cog.on_guild_role_create(FakeGuildRole(555, self.guild, name="Otters", position=4))
+
+        role = await DiscordGuildRole.objects.aget(id=555)
+        self.assertEqual((role.guild_id, role.name, role.position), (42, "Otters", 4))
+
+    async def test_a_role_in_an_unknown_guild_is_ignored(self):
+        await self.cog.on_guild_role_create(FakeGuildRole(556, FakeDiscordGuild(999)))
+
+        self.assertFalse(await DiscordGuildRole.objects.filter(id=556).aexists())
+
+
+class MatchesNeedingPollsTests(TestCase):
+    """The batch used to exclude only matches that had *both* an
+    ActiveMatchMessage and a Prediction, so a poll nobody had voted on yet was
+    posted a second time on the next run."""
+
+    def setUp(self):
+        self.competition = Competition.objects.create(name="World Cup")
+        self.season = Season.objects.create(name="2026", competition=self.competition, year=2026)
+        self.stage = Stage.objects.create(season=self.season, name="Group A", stage_type=StageType.GROUP)
+        self.home = Team.objects.create(name="Germany")
+        self.away = Team.objects.create(name="Brazil")
+        self.pool = PredictionPool.objects.create(name="Pool", season=self.season)
+        self.guild = DiscordGuild.objects.create(id=1, name="g")
+        self.channel = DiscordChannel.objects.create(id=2, guild=self.guild, name="c", channel_type="text")
+        self.now = timezone.now()
+
+    def make_match(self, days):
+        return Match.objects.create(
+            stage=self.stage,
+            home_team=self.home,
+            away_team=self.away,
+            kickoff=self.now + datetime.timedelta(days=days),
+        )
+
+    def polled(self, match):
+        return ActiveMatchMessage.objects.create(
+            match=match, guild=self.guild, pool=self.pool, channel=self.channel, poll_message_id=match.id
+        )
+
+    def needing(self):
+        return set(
+            matches_needing_polls(
+                pool_id=self.pool.id,
+                season_id=self.season.id,
+                start=self.now,
+                end=self.now + datetime.timedelta(days=7),
+            ).values_list("id", flat=True)
+        )
+
+    def test_a_match_with_a_poll_but_no_votes_is_not_polled_again(self):
+        polled = self.make_match(1)
+        self.polled(polled)
+
+        self.assertNotIn(polled.id, self.needing())
+
+    def test_a_match_with_a_poll_and_votes_is_not_polled_again(self):
+        polled = self.make_match(1)
+        self.polled(polled)
+        Prediction.objects.create(
+            pool=self.pool,
+            match=polled,
+            user=User.objects.create(username="voter"),
+            predicted_outcome=MatchOutcome.HOME_WIN,
+        )
+
+        self.assertNotIn(polled.id, self.needing())
+
+    def test_an_unpolled_match_in_the_window_is_included(self):
+        fresh = self.make_match(1)
+
+        self.assertEqual(self.needing(), {fresh.id})
+
+    def test_another_pools_poll_does_not_count(self):
+        """Two pools can play the same season and each needs its own poll."""
+        other_pool = PredictionPool.objects.create(name="Other", season=self.season)
+        match = self.make_match(1)
+        ActiveMatchMessage.objects.create(
+            match=match, guild=self.guild, pool=other_pool, channel=self.channel, poll_message_id=99
+        )
+
+        self.assertEqual(self.needing(), {match.id})
+
+    def test_matches_outside_the_window_are_excluded(self):
+        self.make_match(30)
+        self.make_match(-1)
+
+        self.assertEqual(self.needing(), set())
+
+
+class EmojiSyncGuardTests(TestCase):
+    """The re-entrancy guard was only ever cleared, never set - so it never
+    held, and on_ready fires again on every gateway reconnect."""
+
+    async def test_the_guard_is_armed_while_the_sync_runs(self):
+        cog = EmojiSyncCog(bot=FakeBot())
+        observed = {}
+
+        async def fetch_application_emojis():
+            observed["armed"] = cog._sync_in_progress
+            return []
+
+        cog.bot.fetch_application_emojis = fetch_application_emojis
+
+        await cog.on_ready()
+
+        self.assertTrue(observed["armed"], "a second on_ready would have started a concurrent sync")
+        self.assertFalse(cog._sync_in_progress, "and it has to be cleared again afterwards")
+
+    async def test_a_second_sync_is_skipped_while_one_is_running(self):
+        cog = EmojiSyncCog(bot=FakeBot())
+        cog._sync_in_progress = True
+        called = False
+
+        async def fetch_application_emojis():
+            nonlocal called
+            called = True
+            return []
+
+        cog.bot.fetch_application_emojis = fetch_application_emojis
+
+        await cog.on_ready()
+
+        self.assertFalse(called)
+
+
+class SyncPredictionsUserCreationTests(TestCase):
+    """sync_predictions_from_poll created users itself, without the collision
+    fallback aget_or_create_profile has - so a second voter whose Discord
+    display name matched an existing user raised IntegrityError and took the
+    whole reconciliation pass down."""
+
+    async def test_two_voters_with_the_same_display_name_both_get_accounts(self):
+        await User.objects.acreate_user(username="otter", is_active=True)
+
+        first = await aget_or_create_profile(FakeVoter(111, "otter"))
+        second = await aget_or_create_profile(FakeVoter(222, "otter"))
+
+        self.assertNotEqual(first.user_id, second.user_id)
+        self.assertEqual(await User.objects.filter(username__startswith="otter").acount(), 3)
+
+    async def test_a_known_profile_is_returned_rather_than_recreated(self):
+        user = await User.objects.acreate_user(username="known", is_active=True)
+        profile = await DiscordProfile.objects.acreate(id=333, user=user, username="known")
+
+        self.assertEqual((await aget_or_create_profile(FakeVoter(333, "known"))).pk, profile.pk)
+
+
+class ReconciliationQueryCountTests(TestCase):
+    """The "deactivate everything not live" sweep sat inside the per-channel
+    loop, so it ran the same UPDATE once per channel.
+
+    Sync tests driving the coroutine with async_to_sync: CaptureQueriesContext
+    calls ensure_connection() on entry, which is sync-only.
+    """
+
+    @staticmethod
+    def deactivations(queries):
+        return [q for q in queries.captured_queries if "UPDATE" in q["sql"] and "is_active" in q["sql"]]
+
+    def test_channels_are_deactivated_once_per_guild(self):
+        guild = FakeDiscordGuild(42)
+        guild.channels = [FakeGuildChannel(100 + n, guild, name=f"c{n}") for n in range(6)]
+        cog = ReconciliationCog(bot=FakeBot(guilds=[guild]))
+
+        with CaptureQueriesContext(connection) as queries:
+            async_to_sync(cog.reconcile_channels)()
+
+        self.assertEqual(len(self.deactivations(queries)), 1, "one sweep per guild, not one per channel")
+        self.assertEqual(DiscordChannel.objects.count(), 6)
+
+    def test_a_channel_that_is_gone_is_deactivated(self):
+        guild_row = DiscordGuild.objects.create(id=42, name="Otter Raft")
+        stale = DiscordChannel.objects.create(id=999, guild=guild_row, name="old", channel_type="text")
+        guild = FakeDiscordGuild(42)
+        guild.channels = [FakeGuildChannel(100, guild)]
+        cog = ReconciliationCog(bot=FakeBot(guilds=[guild]))
+
+        async_to_sync(cog.reconcile_channels)()
+
+        stale.refresh_from_db()
+        self.assertFalse(stale.is_active)
+
+    def test_roles_are_deactivated_once_per_guild(self):
+        guild = FakeDiscordGuild(42)
+        guild.roles = [FakeGuildRole(200 + n, guild, name=f"r{n}") for n in range(5)]
+        cog = ReconciliationCog(bot=FakeBot(guilds=[guild]))
+
+        with CaptureQueriesContext(connection) as queries:
+            async_to_sync(cog.reconcile_roles)()
+
+        self.assertEqual(len(self.deactivations(queries)), 1)
+        self.assertEqual(DiscordGuildRole.objects.count(), 5)
