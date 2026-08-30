@@ -143,7 +143,7 @@ visible on the host — backed up with `tar`/`rsync`, and readable by an Nginx t
 never enters a container:
 
 ```bash
-mkdir -p media static pgdata
+mkdir -p media static pgdata backups
 ```
 
 | Directory | Holds | Why a host folder |
@@ -151,6 +151,7 @@ mkdir -p media static pgdata
 | `media/` | Team crests, written by the worker | Nginx serves it directly (step 4), and it is the half `export_db` cannot reconstruct |
 | `static/` | `collectstatic` output | Nginx can serve it without whitenoise, and you can inspect what was collected |
 | `pgdata/` | The Postgres cluster | A file-level backup is `tar czf` on a stopped `db`, no `pg_dump` needed |
+| `backups/` | `export_db` bundles | The bundle is on the host the moment it is written, ready to copy off the machine |
 
 The containers start as root purely so their entrypoint can remap their internal
 user to `PUID`/`PGID`, then drop to it via `gosu` — so with `PUID`/`PGID` set to
@@ -185,6 +186,9 @@ services:
     volumes:
       - ./media:/app/media
       - ./static:/app/static
+      # export_db writes here (BASE_DIR/backups); mounted so a bundle survives
+      # the container it was created in.
+      - ./backups:/app/backups
     depends_on:
       db:
         condition: service_healthy
@@ -340,7 +344,8 @@ sudo docker compose up -d
 ### 6. Create Your First Pool
 A running cluster has no pool yet — and almost every way a pool can be misconfigured is
 silent, so finish with the readiness check. Run these against the `web` container
-(`sudo docker compose exec web uv run python manage.py …`):
+(`sudo docker compose exec --user appuser web uv run python manage.py …` — `exec`
+bypasses the entrypoint that drops privileges, so name the user yourself):
 
 ```bash
 # 1. Sport data: competition, season, rounds, teams (logos + colours), schedule.
@@ -420,8 +425,21 @@ uv run python manage.py import_db backups/otterball_xxx.tar.gz --flush   # resto
 
 `export_db` is the portable option: it uses natural keys, so a bundle restores
 into an empty database on another machine and across a Postgres major version.
-With the production layout above there is also the file-level route — stop `db`
-first, or the copy is a torn cluster:
+Against the production stack it runs in the `web` container and lands in the
+host's `./backups`, since that folder is bind-mounted:
+
+```bash
+sudo docker compose exec --user appuser web uv run python manage.py export_db
+sudo docker compose exec --user appuser web uv run python manage.py import_db \
+    backups/otterball_20260830_180000.tar.gz --flush
+```
+
+`--user appuser` matters here: `docker compose exec` bypasses the entrypoint that
+drops privileges, so without it the command runs as root and the bundle lands on
+the host owned by root — the one file you actually want to copy off the machine.
+
+There is also the file-level route — stop `db` first, or the copy is a torn
+cluster:
 
 ```bash
 sudo docker compose stop db
