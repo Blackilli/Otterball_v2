@@ -22,15 +22,16 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = os.getenv(
-    "DJANGO_SECRET_KEY",
-    "django-insecure-*!wb43v++a(-#-=_i3cj%e%mm!ycwi^t2ls#4f*3%m3i40i#!7",
-)
+# `or` rather than a getenv default, here and below: compose passes every
+# variable in its environment block through, so one that is merely *declared*
+# in .env (`CELERY_RESULT_BACKEND=`) arrives as an empty string and would beat
+# the default a `getenv(..., fallback)` provides.
+SECRET_KEY = os.getenv("DJANGO_SECRET_KEY") or "django-insecure-*!wb43v++a(-#-=_i3cj%e%mm!ycwi^t2ls#4f*3%m3i40i#!7"
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.getenv("ENV") != "production"
 
-ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS", "*").split(",")
+ALLOWED_HOSTS = (os.getenv("ALLOWED_HOSTS") or "*").split(",")
 
 
 # Application definition
@@ -134,7 +135,7 @@ AUTH_USER_MODEL = "users.User"
 
 LANGUAGE_CODE = "en-us"
 
-TIME_ZONE = os.getenv("TZ", "Europe/Berlin")
+TIME_ZONE = os.getenv("TZ") or "Europe/Berlin"
 
 USE_I18N = True
 
@@ -157,7 +158,7 @@ MEDIA_ROOT = BASE_DIR / "media"
 # The cost is a couple of stat() calls per request instead of a dict lookup.
 WHITENOISE_AUTOREFRESH = True
 
-REDIS_URL = os.getenv("REDIS_URL", "redis://127.0.0.1:6379/1")
+REDIS_URL = os.getenv("REDIS_URL") or "redis://127.0.0.1:6379/1"
 
 CACHES = {
     "default": {
@@ -170,8 +171,10 @@ CACHES = {
 }
 
 
-CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", REDIS_URL)
-CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", "django-db")
+CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL") or REDIS_URL
+# An empty backend means no TaskResult rows, and readiness reads the newest one
+# to notice that a scheduled task is *failing* rather than merely not running.
+CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND") or "django-db"
 CELERY_TIMEZONE = TIME_ZONE
 CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
 

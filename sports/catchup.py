@@ -24,6 +24,7 @@ import logging
 from celery.signals import worker_ready
 from django.conf import settings
 from django.core.cache import cache
+from django.db import DatabaseError
 from django.utils import timezone
 
 logger = logging.getLogger(__name__)
@@ -86,7 +87,16 @@ def run_catchup() -> list[str]:
         logger.info("Ingestion catch-up is disabled; leaving the schedule to Beat.")
         return []
 
-    overdue = overdue_tasks()
+    try:
+        overdue = overdue_tasks()
+    except DatabaseError as e:
+        # A worker wins the race against the `web` container's migrate on a
+        # fresh deploy often enough to matter, and the tables it reads are not
+        # there yet. Beat's next tick covers everything this pass would have,
+        # so this is one line rather than a traceback that reads like a crash.
+        logger.warning(f"Skipping ingestion catch-up: the database is not ready yet ({type(e).__name__}: {e}).")
+        return []
+
     if not overdue:
         return []
 
