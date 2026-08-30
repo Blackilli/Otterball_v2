@@ -417,9 +417,21 @@ class GroupByDayTests(ViewTestCase):
         self.assertEqual([day.date for day in days], [datetime.date(2026, 6, 30)])
 
     def test_consecutive_matches_on_one_day_share_a_group(self):
-        first = self.make_match(offset_hours=1)
-        second = self.make_match(offset_hours=2)
-        next_day = self.make_match(offset_hours=48)
+        # Explicit local times rather than now+1h/now+2h: run between 22:00 and
+        # midnight, those two straddle the local date boundary and the test
+        # failed on the clock rather than on the code.
+        local = timezone.get_current_timezone()
+        noon = timezone.make_aware(datetime.datetime(2026, 6, 30, 12, 0), local)
+        first = self.make_match()
+        second = self.make_match()
+        next_day = self.make_match()
+        for match, kickoff in (
+            (first, noon),
+            (second, noon + datetime.timedelta(hours=2)),
+            (next_day, noon + datetime.timedelta(days=1)),
+        ):
+            match.kickoff = kickoff
+            match.save()
 
         days = group_by_day([first, second, next_day])
 
