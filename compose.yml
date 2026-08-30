@@ -26,6 +26,11 @@ x-shared-env: &shared-environment
   DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY}
   ALLOWED_HOSTS: ${ALLOWED_HOSTS:-*}
   TZ: ${TZ:-Europe/Berlin}
+  # Read by docker-entrypoint.sh, which remaps appuser to these before dropping
+  # privileges - so files written into the media volume belong to the host user.
+  PUID: ${PUID:-8888}
+  PGID: ${PGID:-8888}
+  WEB_PORT: ${WEB_PORT:-8000}
 
 
 services:
@@ -39,7 +44,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-secret_password}
       POSTGRES_DB: ${POSTGRES_DB:-otterball_db}
       TZ: ${TZ:-Europe/Berlin}
-    ports: [5432:5432]
+    ports: ['${POSTGRES_PORT:-5432}:5432']
     networks: [otterball_network]
     healthcheck:
       test: [CMD, pg_isready, -U, postgres]
@@ -71,9 +76,9 @@ services:
     # django_celery_beat tables, and this is the container that migrates.
     command: sh -c "uv run python manage.py migrate && uv run python manage.py ensure_schedule
       && uv run python manage.py collectstatic --noinput && uv run gunicorn otterball_v2.wsgi:application
-      --bind 0.0.0.0:8000"
+      --bind 0.0.0.0:$${WEB_PORT:-8000}"
     volumes: [django_media:/app/media, django_static:/app/static]
-    ports: [8000:8000]
+    ports: ['${WEB_PORT:-8000}:${WEB_PORT:-8000}']
     depends_on:
       db:
         condition: service_healthy
@@ -81,7 +86,7 @@ services:
         condition: service_healthy
     networks: [otterball_network]
     healthcheck:
-      test: [CMD, curl, -f, http://localhost:8000/health/]
+      test: [CMD-SHELL, 'curl -f http://127.0.0.1:$${WEB_PORT:-8000}/health/']
       interval: 10s
       timeout: 5s
       retries: 3
