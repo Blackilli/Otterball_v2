@@ -20,6 +20,7 @@ from django_celery_beat.models import IntervalSchedule, PeriodicTask
 from django_celery_results.models import TaskResult
 
 from discord_bot.models import (
+    ActiveMatchMessage,
     DiscordChannel,
     DiscordGuild,
     DiscordGuildPool,
@@ -27,6 +28,7 @@ from discord_bot.models import (
     DiscordTeamEmoji,
 )
 from predictions.admin import PredictionPoolAdmin
+from predictions.closeout import close_out_pool, plan_closeout
 from predictions.history import (
     build_consensus,
     build_contrarians,
@@ -1799,3 +1801,169 @@ class IngestionFreshnessTests(TestCase):
         check = self.find("the last recorded NFL infrastructure sync failed")
         self.assertEqual(check.status, WARN)
         self.assertIn("ESPN is unreachable", check.detail)
+
+
+class PoolCloseoutTests(TestCase):
+    """Covers predictions/closeout.py and the admin page over it.
+
+    A season ends quietly - the last match finishes and every loop keeps going -
+    so closing a pool is a deliberate step. It has to score first and switch off
+    second, or the final leaderboard is missing whatever the scoring signal
+    dropped while a worker was down.
+    """
+
+    def setUp(self):
+        self.competition = Competition.objects.create(name="NFL", sport=Sport.AMERICAN_FOOTBALL)
+        self.season = Season.objects.create(name="NFL 2026", competition=self.competition, year=2026)
+        self.stage = Stage.objects.create(season=self.season, name="Regular Season", level=0)
+        self.pool = PredictionPool.objects.create(name="NFL Pool", season=self.season)
+        PoolStageRule.objects.update_or_create(pool=self.pool, stage=self.stage, defaults={"points_per_correct": 4})
+
+        self.guild = DiscordGuild.objects.create(id=1, name="Test Guild")
+        self.channel = DiscordChannel.objects.create(id=10, guild=self.guild, name="general", channel_type="text")
+        self.binding = DiscordGuildPool.objects.create(
+            guild=self.guild, channel=self.channel, pool=self.pool, is_active=True
+        )
+        self.user = User.objects.create_user(username="player")
+
+    def make_match(self, *, offset=0, status=MatchStatus.FINISHED, home_score=2, away_score=1):
+        return Match.objects.create(
+            stage=self.stage,
+            home_team=Team.objects.create(name=f"Home {offset}"),
+            away_team=Team.objects.create(name=f"Away {offset}"),
+            kickoff=timezone.now() - datetime.timedelta(days=offset + 1),
+            status=status,
+            home_score=home_score,
+            away_score=away_score,
+        )
+
+    def make_message(self, match, **kwargs):
+        return ActiveMatchMessage.objects.create(
+            match=match,
+            guild=self.guild,
+            pool=self.pool,
+            channel=self.channel,
+            poll_message_id=match.id * 1000,
+            **kwargs,
+        )
+
+    def test_it_scores_what_the_signal_left_behind(self):
+        """A match that finished while the worker was down leaves predictions
+        unprocessed, and the leaderboard the season is judged on reads points."""
+        match = self.make_match()
+        prediction = Prediction.objects.create(
+            user=self.user, match=match, pool=self.pool, predicted_outcome=MatchOutcome.HOME_WIN
+        )
+        Prediction.objects.filter(pk=prediction.pk).update(is_processed=False, points_awarded=0)
+
+        result = close_out_pool(self.pool)
+
+        prediction.refresh_from_db()
+        self.assertEqual(result.scored_predictions, 1)
+        self.assertEqual(prediction.points_awarded, 4)
+        self.assertTrue(prediction.is_processed)
+
+    def test_it_retires_the_pools_messages_and_bindings_and_the_pool(self):
+        open_row = self.make_message(self.make_match(offset=0))
+        done_row = self.make_message(self.make_match(offset=1), is_poll_finalized=True, is_ticker_finalized=True)
+
+        result = close_out_pool(self.pool)
+
+        open_row.refresh_from_db()
+        done_row.refresh_from_db()
+        self.binding.refresh_from_db()
+        self.pool.refresh_from_db()
+        self.assertTrue(open_row.is_poll_finalized)
+        self.assertTrue(open_row.is_ticker_finalized)
+        self.assertEqual(result.retired_messages, 1)  # the finished row is left alone
+        self.assertFalse(self.binding.is_active)
+        self.assertFalse(self.pool.is_active)
+
+    def test_another_pools_rows_are_untouched(self):
+        other_pool = PredictionPool.objects.create(name="Other Pool", season=self.season)
+        other_binding = DiscordGuildPool.objects.create(
+            guild=self.guild,
+            channel=DiscordChannel.objects.create(id=11, guild=self.guild, name="other", channel_type="text"),
+            pool=other_pool,
+            is_active=True,
+        )
+        match = self.make_match()
+        other_row = ActiveMatchMessage.objects.create(
+            match=match, guild=self.guild, pool=other_pool, channel=self.channel, poll_message_id=77
+        )
+
+        close_out_pool(self.pool)
+
+        other_row.refresh_from_db()
+        other_binding.refresh_from_db()
+        other_pool.refresh_from_db()
+        self.assertFalse(other_row.is_poll_finalized)
+        self.assertTrue(other_binding.is_active)
+        self.assertTrue(other_pool.is_active)
+
+    def test_closing_twice_changes_nothing_the_second_time(self):
+        self.make_message(self.make_match())
+        close_out_pool(self.pool)
+
+        result = close_out_pool(self.pool)
+
+        self.assertEqual(result.retired_messages, 0)
+        self.assertEqual(result.deactivated_bindings, 0)
+        self.assertFalse(result.pool_deactivated)
+
+    def test_the_plan_counts_what_closing_would_change(self):
+        self.make_message(self.make_match(offset=0))
+        self.make_match(offset=1, status=MatchStatus.SCHEDULED)
+
+        plan = plan_closeout(self.pool)
+
+        self.assertEqual(plan.open_messages, 1)
+        self.assertEqual(plan.active_bindings, 1)
+        self.assertEqual(plan.unplayed_matches, 1)
+        self.assertTrue(plan.pool_is_active)
+        self.assertTrue(plan.is_worth_doing)
+
+
+class PoolCloseoutAdminViewTests(TestCase):
+    """The page itself: it must show before it does, and only act on POST."""
+
+    def setUp(self):
+        self.competition = Competition.objects.create(name="NFL", sport=Sport.AMERICAN_FOOTBALL)
+        self.season = Season.objects.create(name="NFL 2026", competition=self.competition, year=2026)
+        Stage.objects.create(season=self.season, name="Regular Season", level=0)
+        self.pool = PredictionPool.objects.create(name="NFL Pool", season=self.season)
+
+        self.password = "closeout-pass"
+        self.admin_user = User.objects.create_superuser(username="closer", password=self.password)
+        self.client.force_login(self.admin_user)
+        self.url = reverse("admin:predictions_predictionpool_closeout", args=[self.pool.pk])
+
+    def test_a_get_only_reports(self):
+        response = self.client.get(self.url)
+
+        self.pool.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Close out")
+        self.assertTrue(self.pool.is_active)
+
+    def test_a_post_closes_the_pool_and_redirects(self):
+        response = self.client.post(self.url)
+
+        self.pool.refresh_from_db()
+        self.assertRedirects(response, reverse("admin:predictions_predictionpool_changelist"))
+        self.assertFalse(self.pool.is_active)
+
+    def test_a_reader_cannot_close_a_pool(self):
+        reader = User.objects.create_user(username="reader", password=self.password, is_staff=True)
+        self.client.force_login(reader)
+
+        response = self.client.post(self.url)
+
+        self.pool.refresh_from_db()
+        self.assertIn(response.status_code, (302, 403))
+        self.assertTrue(self.pool.is_active)
+
+    def test_the_button_is_on_the_pool_page(self):
+        response = self.client.get(reverse("admin:predictions_predictionpool_change", args=[self.pool.pk]))
+
+        self.assertContains(response, self.url)
