@@ -1,0 +1,95 @@
+{% extends "admin/base_site.html" %}
+
+{% block extrastyle %}
+    {{ block.super }}
+    <style>
+        .closeout-step { margin-bottom: 26px; max-width: 46em; }
+        .closeout-step > h2 {
+            font-size: 0.82rem;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            margin: 0 0 8px;
+        }
+        .closeout-list { list-style: none; margin: 0; padding: 0; }
+        .closeout-list li {
+            display: flex;
+            gap: 12px;
+            align-items: baseline;
+            padding: 6px 0;
+            border-top: 1px solid var(--hairline-color, #e8e8e8);
+        }
+        .closeout-list li:first-child { border-top: 0; }
+        .closeout-count {
+            flex: none;
+            min-width: 2.6em;
+            text-align: right;
+            font-weight: 700;
+            font-variant-numeric: tabular-nums;
+        }
+        .closeout-detail { color: var(--body-quiet-color, #666); }
+        .closeout-warning {
+            border-left: 3px solid #996f00;
+            padding: 8px 12px;
+            margin: 0 0 18px;
+            background: var(--darkened-bg, #f8f8f8);
+        }
+        .closeout-actions { display: flex; gap: 14px; align-items: center; }
+    </style>
+{% endblock %}
+
+{% block content %}
+    <div class="closeout-step">
+        <h2>What this does</h2>
+        <p class="help">
+            Scores any prediction still waiting on points, takes every poll and match
+            ticker of this pool out of the bot's loops, and switches the pool and its
+            channel bindings off. Nothing is deleted, and nothing in Discord changes:
+            the polls and the pinned leaderboard stay exactly where they are, the bot
+            just stops revisiting them.
+        </p>
+    </div>
+
+    {% if plan.unplayed_matches %}
+        <p class="closeout-warning">
+            <strong>{{ plan.unplayed_matches }}</strong> match{{ plan.unplayed_matches|pluralize:"es" }} of
+            {{ pool.season }} {{ plan.unplayed_matches|pluralize:"has,have" }} not been played yet. Closing the
+            pool now means no more polls for {{ plan.unplayed_matches|pluralize:"it,them" }}.
+        </p>
+    {% endif %}
+
+    <div class="closeout-step">
+        <h2>What it will touch</h2>
+        <ul class="closeout-list">
+            <li>
+                <span class="closeout-count">{{ plan.unscored_predictions }}</span>
+                <span>prediction{{ plan.unscored_predictions|pluralize }} on a finished match with no points yet
+                    <span class="closeout-detail">— scored before anything is switched off</span></span>
+            </li>
+            <li>
+                <span class="closeout-count">{{ plan.open_messages }}</span>
+                <span>poll/ticker row{{ plan.open_messages|pluralize }} the bot still revisits
+                    <span class="closeout-detail">— marked finalized</span></span>
+            </li>
+            <li>
+                <span class="closeout-count">{{ plan.active_bindings }}</span>
+                <span>active channel binding{{ plan.active_bindings|pluralize }}
+                    <span class="closeout-detail">— deactivated, so the leaderboard loop stops</span></span>
+            </li>
+            <li>
+                <span class="closeout-count">{% if plan.pool_is_active %}1{% else %}0{% endif %}</span>
+                <span>pool
+                    <span class="closeout-detail">
+                        {% if plan.pool_is_active %}— deactivated, so no more polls are created{% else %}— already inactive{% endif %}
+                    </span></span>
+            </li>
+        </ul>
+    </div>
+
+    <form method="post">
+        {% csrf_token %}
+        <div class="closeout-actions">
+            <input type="submit" class="default" value="Close out {{ pool.name }}">
+            <a href="{{ pool_change_url }}">Back to the pool</a>
+        </div>
+    </form>
+{% endblock %}

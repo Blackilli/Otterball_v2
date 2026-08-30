@@ -2,11 +2,13 @@ from django import forms
 from django.contrib import admin
 from django.core.exceptions import PermissionDenied
 from django.db import transaction
+from django.http import Http404
 from django.shortcuts import redirect, render
 from django.urls import path, reverse
 from django.utils.html import format_html
 
 from discord_bot.models import DiscordGuildPool
+from predictions.closeout import close_out_pool, plan_closeout
 from predictions.forms import PoolSetupForm
 from predictions.models import (
     DayOfWeek,
@@ -95,6 +97,7 @@ class PredictionPoolAdmin(admin.ModelAdmin):
     # readiness() reads season.competition.sport for every row.
     list_select_related = ("season", "season__competition")
     change_list_template = "admin/predictions/predictionpool/change_list.html"
+    change_form_template = "admin/predictions/predictionpool/change_form.html"
 
     @admin.display(description="Stage rules")
     def stage_rule_count(self, pool: PredictionPool) -> int:
@@ -133,6 +136,11 @@ class PredictionPoolAdmin(admin.ModelAdmin):
                 "setup/",
                 self.admin_site.admin_view(self.setup_view),
                 name="predictions_predictionpool_setup",
+            ),
+            path(
+                "<path:object_id>/close-out/",
+                self.admin_site.admin_view(self.closeout_view),
+                name="predictions_predictionpool_closeout",
             ),
             *super().get_urls(),
         ]
@@ -177,6 +185,43 @@ class PredictionPoolAdmin(admin.ModelAdmin):
             ),
         }
         return render(request, "admin/predictions/predictionpool/pool_setup.html", context)
+
+    # -- end of season -----------------------------------------------------
+
+    def closeout_view(self, request, object_id):
+        """Everything that has to happen when a season is over, on one button.
+
+        A season ends quietly - the last match finishes and every loop keeps
+        running - so this scores what is left, retires the pool's Discord
+        messages and switches the pool and its bindings off. It shows what it
+        would touch first, because it cannot be undone from here.
+        """
+        pool = self.get_object(request, object_id)
+        if pool is None:
+            raise Http404("No pool matches the given query.")
+        if not self.has_change_permission(request, pool):
+            raise PermissionDenied
+
+        if request.method == "POST":
+            result = close_out_pool(pool)
+            self.message_user(
+                request,
+                f"Closed out '{pool.name}': scored {result.scored_predictions} prediction(s), "
+                f"retired {result.retired_messages} Discord message row(s), "
+                f"switched off {result.deactivated_bindings} channel binding(s)"
+                + (" and the pool itself." if result.pool_deactivated else "."),
+            )
+            return redirect("admin:predictions_predictionpool_changelist")
+
+        context = {
+            **self.admin_site.each_context(request),
+            "title": f"Close out {pool.name}",
+            "opts": self.opts,
+            "pool": pool,
+            "plan": plan_closeout(pool),
+            "pool_change_url": reverse("admin:predictions_predictionpool_change", args=[pool.pk]),
+        }
+        return render(request, "admin/predictions/predictionpool/pool_closeout.html", context)
 
     @transaction.atomic
     def create_pool(self, data) -> PredictionPool:

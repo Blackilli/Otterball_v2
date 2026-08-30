@@ -169,6 +169,8 @@ For the NFL that means three rows:
 `create_pool` is idempotent — re-running with the same `--name` and season updates rather than
 duplicating, which is why steps 2 and 4 are the same command.
 
+**Ending a season is the other guided page**: the pool's own change form carries a *Close out season* button (`/admin/predictions/predictionpool/<id>/close-out/`), which shows what it would touch and then, on POST, does it: scores every prediction on a finished match that the signal never processed, marks every `ActiveMatchMessage` of the pool poll- and ticker-finalized, deactivates its `DiscordGuildPool` bindings and the pool itself. Order matters and is asserted - points are computed while the pool is still live, so the leaderboard the bot last rendered and the one the website shows afterwards agree. The work lives in `predictions/closeout.py`, split from the admin the same way `readiness.py` is, and it **never touches Discord**: it runs in the `web` container, so the polls and the pinned leaderboard stay in the channel exactly as they are and the bot simply stops revisiting them. Nothing about a finished season announces itself otherwise - the poll loop, the leaderboard loop and the ticker all keep running against a competition with no fixtures left.
+
 **The same flow has a guided page in the admin**: *Prediction pools → Start a new pool*
 (`/admin/predictions/predictionpool/setup/`). It opens with the two prerequisites above (is sport
 data ingested, has the bot connected), does steps 2 and 4 in one form, and finishes with the step-5
