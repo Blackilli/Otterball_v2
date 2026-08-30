@@ -1,5 +1,6 @@
 import datetime
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.urls import reverse
@@ -814,6 +815,19 @@ class StatsViewTests(ViewTestCase):
 
 class RankChartLayoutTests(TestCase):
     """Covers sports/charts.py geometry - the parts a screenshot cannot assert."""
+
+    def test_every_colour_slot_is_defined_in_both_modes(self):
+        """A slot with no rule leaves the polyline with no `stroke` at all,
+        which SVG paints black - so raising CHART_HIGHLIGHTED past the palette
+        has to fail here rather than on the page."""
+        css = (settings.BASE_DIR / "sports/static/sports/css/site.css").read_text()
+
+        for slot in range(1, CHART_HIGHLIGHTED + 1):
+            with self.subTest(slot=slot):
+                self.assertEqual(css.count(f"--series-{slot}: #"), 2, "needs a light and a dark value")
+                self.assertIn(f".rank-chart polyline.series-{slot} {{ stroke: var(--series-{slot}); }}", css)
+                self.assertIn(f".rank-chart text.series-{slot},", css)
+                self.assertIn(f".swatch.series-{slot} {{", css)
 
     def test_no_chart_below_two_points(self):
         self.assertIsNone(build_rank_chart([], {}))

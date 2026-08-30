@@ -25,12 +25,21 @@
        normal-vision separation, contrast). Do not re-pick one by eye - the
        slot ordering is the colourblind-safety mechanism, not decoration. The
        light steps sit under 3:1 on white, which is why every line is also
-       labelled at its end and the chart ships a table view. */
+       labelled at its end and the chart ships a table view.
+
+       All eight are in play. That is the documented palette's full length and
+       the cap on how many lines can be told apart at once: a ninth would have
+       to be invented, and the ordering it slotted into would no longer be a
+       validated one. Selected players past the eighth take the context grey
+       and are read by their end-of-line label. */
     --series-1: #2a78d6;
     --series-2: #eb6834;
     --series-3: #1baf7a;
     --series-4: #eda100;
     --series-5: #e87ba4;
+    --series-6: #008300;
+    --series-7: #4a3aa7;
+    --series-8: #e34948;
     --series-context: #b3b8c6;
     --series-field: #9aa1b2;
     --grid: #e6e8ef;
@@ -60,6 +69,9 @@
         --series-3: #199e70;
         --series-4: #c98500;
         --series-5: #d55181;
+        --series-6: #008300;
+        --series-7: #9085e9;
+        --series-8: #e66767;
         --series-context: #4a5062;
         --series-field: #6b7285;
         --grid: #2a2f3b;
@@ -816,6 +828,9 @@ ul.vote-legend {
 .rank-chart polyline.series-3 { stroke: var(--series-3); }
 .rank-chart polyline.series-4 { stroke: var(--series-4); }
 .rank-chart polyline.series-5 { stroke: var(--series-5); }
+.rank-chart polyline.series-6 { stroke: var(--series-6); }
+.rank-chart polyline.series-7 { stroke: var(--series-7); }
+.rank-chart polyline.series-8 { stroke: var(--series-8); }
 .rank-chart polyline.series-context { stroke: var(--series-context); }
 .rank-chart polyline.series-field { stroke: var(--series-field); }
 
@@ -833,6 +848,15 @@ ul.vote-legend {
 
 .rank-chart text.series-5,
 .rank-chart circle.series-5 { fill: var(--series-5); }
+
+.rank-chart text.series-6,
+.rank-chart circle.series-6 { fill: var(--series-6); }
+
+.rank-chart text.series-7,
+.rank-chart circle.series-7 { fill: var(--series-7); }
+
+.rank-chart text.series-8,
+.rank-chart circle.series-8 { fill: var(--series-8); }
 
 .rank-chart text.series-context { fill: var(--text-muted); }
 .rank-chart circle.series-context { fill: var(--series-context); }
@@ -1082,6 +1106,18 @@ ul.vote-legend {
 
 .swatch.series-5 {
     background: var(--series-5);
+}
+
+.swatch.series-6 {
+    background: var(--series-6);
+}
+
+.swatch.series-7 {
+    background: var(--series-7);
+}
+
+.swatch.series-8 {
+    background: var(--series-8);
 }
 
 .swatch.series-context {

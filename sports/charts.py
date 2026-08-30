@@ -24,8 +24,15 @@ CHART_SERIES = 10
 
 #: Of those, how many carry a categorical colour. The rest are drawn in the
 #: context grey and identified by their end-of-line label, so identity never
-#: rests on colour alone - and five is inside the palette's comfortable cap.
-CHART_HIGHLIGHTED = 5
+#: rests on colour alone.
+#:
+#: Eight is the length of the validated palette, not a preference: the whole
+#: set clears every adjacent gate against this site's own surfaces in both
+#: modes (worst CVD delta-E 9.1 light / 8.4 dark, normal-vision 19.6 / 19.3),
+#: and a ninth colour would have to be invented, which would put the ordering
+#: outside what was validated. Since the reader picks who is drawn, the cap
+#: bites more often than it used to - so past it, grey plus a label.
+CHART_HIGHLIGHTED = 8
 
 WIDTH = 1000
 PAD_TOP = 18
