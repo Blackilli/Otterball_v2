@@ -289,7 +289,9 @@ services:
       web:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "ps aux | grep 'celery beat' | grep -v grep"]
+      # `[c]elery`, not 'celery beat': the process is `celery -A otterball_v2
+      # beat`, and the brackets stop the check's own shell matching itself.
+      test: ["CMD-SHELL", "ps aux | grep -q '[c]elery -A otterball_v2 beat'"]
       interval: 30s
       timeout: 5s
       retries: 3

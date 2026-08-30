@@ -191,7 +191,13 @@ services:
         condition: service_healthy
     networks: [otterball_network]
     healthcheck:
-      test: [CMD-SHELL, ps aux | grep 'celery beat' | grep -v grep]
+      # `[c]elery` (the bracket trick), not 'celery beat': the process is
+      # `celery -A otterball_v2 beat`, so the old pattern never matched and beat
+      # reported unhealthy while scheduling perfectly. The brackets keep the
+      # healthcheck's own shell - whose command line contains this pattern -
+      # from matching itself, which is how a pgrep -f version passes even when
+      # beat is dead.
+      test: [CMD-SHELL, "ps aux | grep -q '[c]elery -A otterball_v2 beat'"]
       interval: 30s
       timeout: 5s
       retries: 3
