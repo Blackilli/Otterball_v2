@@ -69,6 +69,14 @@ TZ=Europe/Berlin
 # (gunicorn binds it, the healthcheck probes it, compose publishes it).
 WEB_PORT=8000
 
+# Host address that port is published on. 127.0.0.1 is loopback only, i.e.
+# reachable through the Nginx in step 4 and nothing else; 0.0.0.0 is every IPv4
+# address on the machine, `::` every IPv6 one. Serving the app straight off the
+# internet this way means no TLS and no proxy in front of it - and ALLOWED_HOSTS
+# has to name whatever people type, an IPv6 literal in brackets (`[2001:db8::1]`)
+# included.
+WEB_BIND=127.0.0.1
+
 # Celery prefork children. These tasks wait on HTTP rather than compute, and
 # every child is a full Django process (~60 MB), so the default of one per core
 # buys nothing on a small VM.
@@ -187,7 +195,15 @@ services:
     # No `command:` — the image's default one migrates, installs the Celery Beat
     # schedule, collects static files and then runs gunicorn on WEB_PORT.
     ports:
-      - "127.0.0.1:${WEB_PORT:-8000}:${WEB_PORT:-8000}"
+      # WEB_BIND is the host address: 127.0.0.1 keeps gunicorn behind the Nginx
+      # in step 4, 0.0.0.0 serves every IPv4 address directly, `::` every IPv6
+      # one. Docker binds `::` v6-only, so uncomment the second entry to serve
+      # both stacks at once.
+      - "${WEB_BIND:-127.0.0.1}:${WEB_PORT:-8000}:${WEB_PORT:-8000}"
+      # - host_ip: "::"
+      #   target: ${WEB_PORT:-8000}
+      #   published: "${WEB_PORT:-8000}"
+      #   protocol: tcp
     volumes:
       - ./media:/app/media
       - ./static:/app/static
