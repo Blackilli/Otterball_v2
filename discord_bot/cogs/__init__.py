@@ -2,6 +2,7 @@ from .channel_sync import ChannelSyncCog
 from .guild_sync import GuildSyncCog
 from .leaderboard_sync import LeaderboardSyncCog
 from .match_ticker import MatchTickerCog
+from .message_preview import MessagePreviewCog
 from .poll_creation import PollCreationCog
 from .poll_listener import PollPredictionCog
 from .pool_onboarding import PoolOnboardingCog
@@ -13,6 +14,7 @@ __all__ = [
     "ChannelSyncCog",
     "GuildSyncCog",
     "MatchTickerCog",
+    "MessagePreviewCog",
     "PollPredictionCog",
     "ReconciliationCog",
     "RoleSyncCog",

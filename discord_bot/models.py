@@ -249,3 +249,89 @@ class PoolNotificationPreference(models.Model):
                 notify_missing_votes=False,
             ).values_list("user_id", flat=True)
         }
+
+
+class PreviewMessageKind(models.TextChoices):
+    """Which of a match's messages a preview asks for.
+
+    The poll and the three ticker states are the four things a channel ever
+    sees for a match, so previewing is picking from this list.
+    """
+
+    POLL = "poll", "Prediction poll"
+    STARTING_SOON = "starting_soon", "Reminder — starting soon"
+    IN_PROGRESS = "in_progress", "Live score"
+    RESULT_POSTED = "result", "Full time"
+    #: Not a match message at all: every clickable component in one place, so
+    #: the buttons and the modal behind them can actually be tried. A modal
+    #: opens from an interaction and never on its own, so it cannot be posted.
+    COMPONENTS = "components", "Buttons & modals"
+
+
+class PreviewStatus(models.TextChoices):
+    PENDING = "pending", "Waiting for the bot"
+    POSTED = "posted", "Posted"
+    FAILED = "failed", "Failed"
+    CLEANED = "cleaned", "Removed again"
+
+
+class MessagePreviewRequest(models.Model):
+    """A "post these test messages" order the admin leaves for the bot.
+
+    The admin runs in the `web` container and has no Discord connection, so it
+    cannot post anything itself - the row *is* the signal, exactly as
+    DiscordGuildPool is for the welcome post. `MessagePreviewCog` picks it up
+    within 15 seconds, renders through the same code the real flow uses (the
+    poll builder in `poll_creation`, the state renderers on `MatchTickerCog`),
+    and writes back what it posted so the same page can delete it again.
+
+    It deliberately creates **no ActiveMatchMessage**. That row is what the
+    poll loop reads as "this match already has a poll" and what the ticker
+    walks, so a preview that wrote one would suppress the real poll and then
+    let the ticker edit the preview. The cost is that votes on a preview poll
+    are ignored by `PollPredictionCog` - which is what a preview should do.
+    """
+
+    guild_pool: DiscordGuildPool = models.ForeignKey(
+        "DiscordGuildPool",
+        on_delete=models.CASCADE,
+        related_name="preview_requests",
+        help_text="Which pool binding to post into - that is the guild and the channel.",
+    )
+    match = models.ForeignKey(
+        "sports.Match",
+        on_delete=models.CASCADE,
+        related_name="preview_requests",
+        help_text="The fixture to render. Any match of the season will do; nothing about it is changed.",
+    )
+    kinds = models.JSONField(
+        default=list,
+        help_text="PreviewMessageKind values to post, in the order the channel would see them.",
+    )
+    requested_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="message_preview_requests",
+    )
+    status = models.CharField(max_length=20, choices=PreviewStatus.choices, default=PreviewStatus.PENDING)
+    error = models.TextField(blank=True)
+    #: Everything this request put in the channel, header included, so the
+    #: admin can take it all back out without hunting for it by hand.
+    posted_message_ids = models.JSONField(default=list, blank=True)
+    cleanup_requested = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    processed_at = models.DateTimeField(null=True, blank=True)
+    cleaned_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ("-created_at",)
+
+    def __str__(self) -> str:
+        return f"Preview of match #{self.match_id} for pool #{self.guild_pool.pool_id} ({self.status})"
+
+    @property
+    def kind_labels(self) -> list[str]:
+        labels = dict(PreviewMessageKind.choices)
+        return [labels.get(kind, kind) for kind in self.kinds]

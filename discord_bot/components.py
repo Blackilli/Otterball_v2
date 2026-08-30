@@ -27,7 +27,7 @@ Constraints that shaped what is here, from Discord's component reference:
 
 import re
 from dataclasses import dataclass
-from typing import Sequence
+from typing import Callable, Sequence
 
 import discord
 from discord import ui
@@ -146,6 +146,70 @@ def score_line(score: int | str, widest: int) -> str:
     if shortfall % 2:
         pad += HALF_DIGIT
     return f"# {pad}{score}"
+
+
+@dataclass(frozen=True)
+class InteractiveComponent:
+    """One clickable thing the bot puts in a channel, and what it does.
+
+    The gallery message is the only way to try a **modal**: Discord opens one
+    in response to an interaction and never on its own, so a modal cannot be
+    posted - it can only be reached through the component that opens it.
+
+    Kept as a list rather than hand-written into the gallery so a new button
+    is one entry here and is previewable the moment it exists.
+    """
+
+    title: str
+    description: str
+    #: pool id -> the item itself. The real one: these are dispatched by their
+    #: dynamic templates, so a gallery button behaves exactly like the one on a
+    #: reminder, including writing to the database.
+    build: "Callable[[int], ui.Item]"
+
+
+INTERACTIVE_COMPONENTS: "tuple[InteractiveComponent, ...]" = (
+    InteractiveComponent(
+        title="Notification settings",
+        description=(
+            "Opens the notification-settings modal for this pool. Its checkbox arrives showing your real "
+            "setting, and submitting it really saves - so this is a live control, not a mock-up."
+        ),
+        build=NotificationSettingsButton,
+    ),
+)
+
+
+class ComponentGalleryView(ui.LayoutView):
+    """Every interactive component the bot posts, in one message you can click.
+
+    Its whole purpose is that the components are real. A gallery of look-alikes
+    would prove that the layout renders and nothing about whether the thing
+    actually works - which is the half that breaks, since a button is dispatched
+    by a custom_id template that no rendering test can exercise.
+    """
+
+    def __init__(self, pool_id: int, pool_name: str):
+        super().__init__(timeout=None)
+
+        container = ui.Container(accent_colour=discord.Color.blurple())
+        container.add_item(ui.TextDisplay("### 🧪 Buttons & modals"))
+        container.add_item(ui.TextDisplay(f"-# Every control below belongs to **{pool_name}** and is the real one."))
+        container.add_item(ui.Separator())
+
+        for entry in INTERACTIVE_COMPONENTS:
+            container.add_item(
+                ui.Section(
+                    ui.TextDisplay(f"**{entry.title}**\n{entry.description}"),
+                    accessory=entry.build(pool_id),
+                )
+            )
+
+        container.add_item(ui.Separator())
+        container.add_item(
+            ui.TextDisplay("-# A modal only opens from an interaction, so this message is how one is reached at all.")
+        )
+        self.add_item(container)
 
 
 @dataclass(frozen=True)

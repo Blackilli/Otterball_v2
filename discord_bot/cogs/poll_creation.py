@@ -38,6 +38,62 @@ def matches_needing_polls(*, pool_id: int, season_id: int, start, end):
     )
 
 
+#: What a team with no custom emoji falls back to on a poll answer.
+DEFAULT_HOME_EMOJI = "⚪"
+DEFAULT_AWAY_EMOJI = "⚫"
+
+
+async def aget_team_emojis(bot: commands.Bot, team_ids) -> dict[int, object]:
+    """team id -> the application emoji to put on its poll answer.
+
+    Two lookups, not one per team: the application's emojis come from Discord
+    in a single call and the DiscordTeamEmoji rows in a single query. A team
+    with no emoji is simply absent, and the caller falls back.
+    """
+    emojis = {emoji.id: emoji for emoji in await bot.fetch_application_emojis()}
+    return {
+        row.team_id: emojis[row.id]
+        async for row in DiscordTeamEmoji.objects.filter(team_id__in=list(team_ids)).aiterator()
+        if row.id in emojis
+    }
+
+
+def build_poll_content(match: Match, home_emoji, away_emoji) -> str:
+    """The message the poll rides on: who, which round, and when."""
+    content = f"# **{home_emoji} {match.home_team}** vs. **{match.away_team} {away_emoji}**"
+    content += f"\n### Stage: `{match.stage.name}`"
+    content += f"\n### 📅       {format_dt(match.kickoff, style='F')}"
+    content += f"\n### ⏳       {format_dt(match.kickoff, style='R')}"
+    content += "\n-# Polls may close early, so don't vote on the last second"
+    return content
+
+
+def build_match_poll(match: Match, home_emoji, away_emoji, duration: datetime.timedelta) -> discord.Poll | None:
+    """The poll itself, or None when the stage type has no answer ordering.
+
+    A stage absent from DISCORD_POLL_ANSWER_ORDER_MAP is a stage nobody has
+    decided about - whether a draw is possible in it is not something to
+    guess - so the match is skipped and the gap is loud in the log.
+    """
+    answer_order = DISCORD_POLL_ANSWER_ORDER_MAP.get(match.stage.stage_type)
+    if answer_order is None:
+        logger.error(f"No answers found for match {match.id} in stage {match.stage.id}")
+        return None
+
+    poll = discord.Poll(question=f"{match.home_team} vs. {match.away_team}", duration=duration)
+    for outcome in answer_order:
+        match outcome:
+            case None:
+                continue
+            case MatchOutcome.HOME_WIN:
+                poll.add_answer(text=match.home_team.name, emoji=home_emoji)
+            case MatchOutcome.DRAW:
+                poll.add_answer(text="Draw")
+            case MatchOutcome.AWAY_WIN:
+                poll.add_answer(text=match.away_team.name, emoji=away_emoji)
+    return poll
+
+
 class DayOfWeek(IntEnum):
     MONDAY = 0
     TUESDAY = 1
@@ -96,8 +152,6 @@ class PollCreationCog(commands.Cog):
         current_time = datetime.time(hour=local_now.hour, minute=local_now.minute)
 
         logger.info(f"Poll creation loop triggered at {local_now.strftime('%H:%M')} (Weekday: {current_weekday})")
-
-        emojis = {emoji.id: emoji for emoji in await self.bot.fetch_application_emojis()}
 
         guild_pools_iterator = (
             DiscordGuildPool.objects.select_related("pool", "pool__season", "pool__configuration")
@@ -162,9 +216,7 @@ class PollCreationCog(commands.Cog):
                 continue
 
             team_ids = {m.home_team_id for m in upcoming_matches} | {m.away_team_id for m in upcoming_matches}
-            emoji_mapping = {
-                e.team_id: e async for e in DiscordTeamEmoji.objects.filter(team_id__in=team_ids).aiterator()
-            }
+            team_emojis = await aget_team_emojis(self.bot, team_ids)
 
             logger.info(f"Found {len(upcoming_matches)} upcoming matches.")
             announcement = f"The new polls are ready! {notification_role.mention if notification_role else ''}"
@@ -179,44 +231,19 @@ class PollCreationCog(commands.Cog):
 
             try:
                 for match in upcoming_matches:
-                    db_home_emoji = emoji_mapping.get(match.home_team_id)
-                    db_away_emoji = emoji_mapping.get(match.away_team_id)
+                    home_emoji = team_emojis.get(match.home_team_id, DEFAULT_HOME_EMOJI)
+                    away_emoji = team_emojis.get(match.away_team_id, DEFAULT_AWAY_EMOJI)
 
-                    home_emoji = emojis.get(db_home_emoji.id if db_home_emoji else 0, "⚪")
-                    away_emoji = emojis.get(db_away_emoji.id if db_away_emoji else 0, "⚫")
-
-                    content = f"# **{home_emoji} {match.home_team}** vs. **{match.away_team} {away_emoji}**"
-                    content += f"\n### Stage: `{match.stage.name}`"
-                    content += f"\n### 📅       {format_dt(match.kickoff, style='F')}"
-                    content += f"\n### ⏳       {format_dt(match.kickoff, style='R')}"
-                    content += f"\n-# Polls may close early, so don't vote on the last second"
+                    content = build_poll_content(match, home_emoji, away_emoji)
 
                     duration = match.kickoff - timezone.now()
                     if duration.total_seconds() < 0:
                         continue
 
                     logger.info(f"Creating poll for {match.id} for {floor(duration.total_seconds()/60/60)} hours.")
-                    poll = discord.Poll(
-                        question=f"{match.home_team} vs. {match.away_team}",
-                        duration=duration,
-                    )
-                    answer_order = DISCORD_POLL_ANSWER_ORDER_MAP.get(match.stage.stage_type)
-                    if answer_order is None:
-                        logger.error(f"No answers found for match {match.id} in stage {match.stage.id}")
+                    poll = build_match_poll(match, home_emoji, away_emoji, duration)
+                    if poll is None:
                         continue
-                    for outcome in answer_order:
-                        match outcome:
-                            case None:
-                                continue
-                            case MatchOutcome.HOME_WIN:
-                                poll.add_answer(text=match.home_team.name, emoji=home_emoji)
-                                continue
-                            case MatchOutcome.DRAW:
-                                poll.add_answer(text="Draw")
-                                continue
-                            case MatchOutcome.AWAY_WIN:
-                                poll.add_answer(text=match.away_team.name, emoji=away_emoji)
-                                continue
                     logger.info(f"Poll created: {poll}")
                     logger.info(content)
                     poll_msg = await channel.send(content=content, poll=poll)

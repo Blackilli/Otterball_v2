@@ -1,5 +1,5 @@
 from django import forms
-from django.contrib import admin
+from django.contrib import admin, messages
 from django.core.exceptions import PermissionDenied
 from django.db import transaction
 from django.http import Http404
@@ -7,9 +7,9 @@ from django.shortcuts import redirect, render
 from django.urls import path, reverse
 from django.utils.html import format_html
 
-from discord_bot.models import DiscordGuildPool
+from discord_bot.models import DiscordGuildPool, MessagePreviewRequest
 from predictions.closeout import close_out_pool, plan_closeout
-from predictions.forms import PoolSetupForm
+from predictions.forms import MessagePreviewForm, PoolSetupForm
 from predictions.models import (
     DayOfWeek,
     PoolConfiguration,
@@ -142,6 +142,11 @@ class PredictionPoolAdmin(admin.ModelAdmin):
                 self.admin_site.admin_view(self.closeout_view),
                 name="predictions_predictionpool_closeout",
             ),
+            path(
+                "<path:object_id>/preview-messages/",
+                self.admin_site.admin_view(self.preview_view),
+                name="predictions_predictionpool_preview",
+            ),
             *super().get_urls(),
         ]
 
@@ -222,6 +227,77 @@ class PredictionPoolAdmin(admin.ModelAdmin):
             "pool_change_url": reverse("admin:predictions_predictionpool_change", args=[pool.pk]),
         }
         return render(request, "admin/predictions/predictionpool/pool_closeout.html", context)
+
+    # -- test messages -----------------------------------------------------
+
+    def preview_view(self, request, object_id):
+        """Post a match's messages into the pool's channel, to look at them.
+
+        The admin has no Discord connection, so this queues a
+        MessagePreviewRequest and the bot posts it within about 15 seconds -
+        the same "the row is the signal" arrangement the welcome post uses.
+        Everything is rendered by the code the real flow runs, so what lands
+        in the channel is what a real match night would look like.
+        """
+        pool = self.get_object(request, object_id)
+        if pool is None:
+            raise Http404("No pool matches the given query.")
+        if not self.has_change_permission(request, pool):
+            raise PermissionDenied
+
+        form = MessagePreviewForm(pool)
+        if request.method == "POST":
+            cleanup_id = request.POST.get("cleanup")
+            if cleanup_id:
+                self.request_cleanup(request, pool, cleanup_id)
+                return redirect(request.path)
+
+            form = MessagePreviewForm(pool, request.POST)
+            if form.is_valid():
+                MessagePreviewRequest.objects.create(
+                    guild_pool=form.cleaned_data["guild_pool"],
+                    match=form.cleaned_data["match"],
+                    kinds=form.cleaned_data["kinds"],
+                    requested_by=request.user,
+                )
+                self.message_user(
+                    request,
+                    "Queued. The bot posts the test messages within about 15 seconds; "
+                    "reload this page to see whether it did.",
+                )
+                # POST/redirect/GET, so a refresh does not queue them twice.
+                return redirect(request.path)
+
+        context = {
+            **self.admin_site.each_context(request),
+            "title": f"Preview messages for {pool.name}",
+            "opts": self.opts,
+            "pool": pool,
+            "form": form,
+            "requests": (
+                MessagePreviewRequest.objects.filter(guild_pool__pool=pool)
+                .select_related("match", "match__home_team", "match__away_team", "guild_pool__channel")
+                .order_by("-created_at")[:10]
+            ),
+            "pool_change_url": reverse("admin:predictions_predictionpool_change", args=[pool.pk]),
+        }
+        return render(request, "admin/predictions/predictionpool/pool_preview.html", context)
+
+    def request_cleanup(self, request, pool: PredictionPool, preview_id: str) -> None:
+        """Ask the bot to delete a preview's messages again.
+
+        Only the bot can: they are Discord messages, and this container cannot
+        reach Discord - so the flag is the whole mechanism, exactly as posting
+        them was.
+        """
+        preview = MessagePreviewRequest.objects.filter(pk=preview_id, guild_pool__pool=pool).first()
+        if preview is None:
+            self.message_user(request, "That preview is not one of this pool's.", level=messages.WARNING)
+            return
+
+        preview.cleanup_requested = True
+        preview.save(update_fields=["cleanup_requested"])
+        self.message_user(request, "Queued for removal. The bot deletes those messages within about 15 seconds.")
 
     @transaction.atomic
     def create_pool(self, data) -> PredictionPool:

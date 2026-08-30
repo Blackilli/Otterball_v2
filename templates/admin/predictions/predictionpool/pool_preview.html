@@ -1,0 +1,115 @@
+{% extends "admin/base_site.html" %}
+
+{% block extrastyle %}
+    {{ block.super }}
+    <style>
+        .preview-step { margin-bottom: 26px; max-width: 46em; }
+        .preview-step > h2 {
+            font-size: 0.82rem;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            margin: 0 0 8px;
+        }
+        .preview-field { margin-bottom: 16px; }
+        .preview-field > label { display: block; font-weight: 600; margin-bottom: 4px; }
+        .preview-field ul { list-style: none; margin: 0; padding: 0; }
+        .preview-field li { padding: 2px 0; }
+        .preview-actions { display: flex; gap: 14px; align-items: center; }
+        .preview-errors { color: #ba2121; margin: 0 0 8px; }
+        .preview-table { width: 100%; max-width: 60em; border-collapse: collapse; }
+        .preview-table th, .preview-table td {
+            text-align: left;
+            padding: 6px 10px 6px 0;
+            border-top: 1px solid var(--hairline-color, #e8e8e8);
+            vertical-align: top;
+        }
+        .preview-status-failed { color: #ba2121; }
+        .preview-status-pending { color: #996f00; }
+        .preview-detail { color: var(--body-quiet-color, #666); }
+    </style>
+{% endblock %}
+
+{% block content %}
+    <div class="preview-step">
+        <h2>What this does</h2>
+        <p class="help">
+            Posts one match's messages into the pool's channel so you can look at them: the
+            prediction poll, the pre-kickoff reminder, the live score and the full-time result.
+            They are built by the same code a real match night runs, so what you see is what the
+            channel gets.
+        </p>
+        <p class="help">
+            Nothing is scored and nothing is tracked — votes on a test poll are ignored, the match
+            still gets its real poll later, and no mention fires, so previewing the reminder pings
+            nobody. Use <strong>Remove</strong> below to delete a set of test messages again.
+        </p>
+        <p class="help">
+            <strong>Buttons &amp; modals</strong> is the exception to "nothing is real": it posts every
+            clickable component the bot uses, and they are the live ones — clicking the notification
+            button opens the actual modal and saves your actual setting. A modal only opens in response
+            to an interaction, so that message is the only way to see one at all.
+        </p>
+        <p class="help">
+            The admin cannot talk to Discord, so this leaves the bot an order and the bot posts it
+            within about 15 seconds. If nothing appears, the bot is not running.
+        </p>
+    </div>
+
+    <form method="post">
+        {% csrf_token %}
+        {% if form.non_field_errors %}<p class="preview-errors">{{ form.non_field_errors }}</p>{% endif %}
+        {% for field in form %}
+            <div class="preview-field">
+                <label for="{{ field.id_for_label }}">{{ field.label }}</label>
+                {% if field.errors %}<p class="preview-errors">{{ field.errors }}</p>{% endif %}
+                {{ field }}
+                {% if field.help_text %}<p class="help">{{ field.help_text }}</p>{% endif %}
+            </div>
+        {% endfor %}
+        <div class="preview-actions">
+            <input type="submit" class="default" value="Post the test messages">
+            <a href="{{ pool_change_url }}">Back to the pool</a>
+        </div>
+    </form>
+
+    {% if requests %}
+        <div class="preview-step" style="margin-top: 32px; max-width: none;">
+            <h2>Recent test messages</h2>
+            <table class="preview-table">
+                <tr>
+                    <th>Queued</th>
+                    <th>Match</th>
+                    <th>Messages</th>
+                    <th>Status</th>
+                    <th></th>
+                </tr>
+                {% for preview in requests %}
+                    <tr>
+                        <td>{{ preview.created_at }}</td>
+                        <td>
+                            {{ preview.match.home_team }} vs. {{ preview.match.away_team }}
+                            <span class="preview-detail">— #{{ preview.guild_pool.channel.name }}</span>
+                        </td>
+                        <td>{{ preview.kind_labels|join:", " }}</td>
+                        <td class="preview-status-{{ preview.status }}">
+                            {{ preview.get_status_display }}
+                            {% if preview.cleanup_requested and not preview.cleaned_at %}
+                                <span class="preview-detail">— removal queued</span>
+                            {% endif %}
+                            {% if preview.error %}<div class="preview-detail">{{ preview.error }}</div>{% endif %}
+                        </td>
+                        <td>
+                            {% if preview.posted_message_ids and not preview.cleanup_requested %}
+                                <form method="post">
+                                    {% csrf_token %}
+                                    <input type="hidden" name="cleanup" value="{{ preview.pk }}">
+                                    <input type="submit" value="Remove">
+                                </form>
+                            {% endif %}
+                        </td>
+                    </tr>
+                {% endfor %}
+            </table>
+        </div>
+    {% endif %}
+{% endblock %}
