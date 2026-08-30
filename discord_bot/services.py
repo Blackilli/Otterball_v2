@@ -176,14 +176,23 @@ async def aget_or_create_user_id(discord_user: discord.abc.User) -> int:
 
 
 async def aset_missing_vote_reminders(discord_user: discord.abc.User, pool_id: int, *, enabled: bool) -> None:
-    """Turn a user's missing-vote reminders on or off for one pool.
-
-    Shared by the /notifications command and the Mute button on the reminder
-    itself, so the two cannot disagree about what muting means.
-    """
+    """Turn a user's missing-vote reminders on or off for one pool."""
     user_id = await aget_or_create_user_id(discord_user)
     await PoolNotificationPreference.objects.aupdate_or_create(
         user_id=user_id,
         pool_id=pool_id,
         defaults={"notify_missing_votes": enabled},
     )
+
+
+async def aget_missing_vote_reminders(discord_user: discord.abc.User, pool_id: int) -> bool:
+    """Whether a user currently gets missing-vote reminders for one pool.
+
+    Read-only on purpose: opening the settings form must not create an account
+    for someone who is only looking. An absent row means notify.
+    """
+    preference = await PoolNotificationPreference.objects.filter(
+        user__discord_profile__id=discord_user.id,
+        pool_id=pool_id,
+    ).afirst()
+    return preference is None or preference.notify_missing_votes

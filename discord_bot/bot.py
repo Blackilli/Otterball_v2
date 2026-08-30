@@ -30,12 +30,13 @@ class OtterBallBot(commands.Bot):
     async def setup_hook(self):
         self.bot_heartbeat_loop.start()
 
-        # The Mute button on a pre-kickoff reminder carries its pool id in its
-        # custom_id, so registering the class once is what makes every such
-        # button - including ones posted before the last restart - dispatchable.
-        from discord_bot.components import MuteRemindersButton
+        # The notification-settings button on a pre-kickoff reminder carries its
+        # pool id in its custom_id, so registering the class once is what makes
+        # every such button - including ones posted before the last restart -
+        # dispatchable.
+        from discord_bot.components import NotificationSettingsButton
 
-        self.add_dynamic_items(MuteRemindersButton)
+        self.add_dynamic_items(NotificationSettingsButton)
 
         logger.info("Initializing bot cogs...")
         from discord_bot.cogs import (
@@ -43,7 +44,6 @@ class OtterBallBot(commands.Bot):
             GuildSyncCog,
             LeaderboardSyncCog,
             MatchTickerCog,
-            NotificationPreferenceCog,
             PollCreationCog,
             PollPredictionCog,
             PoolOnboardingCog,
@@ -59,7 +59,6 @@ class OtterBallBot(commands.Bot):
         await self.add_cog(PollPredictionCog(self))
         await self.add_cog(RoleSyncCog(self))
         await self.add_cog(MatchTickerCog(self))
-        await self.add_cog(NotificationPreferenceCog(self))
         await self.add_cog(EmojiSyncCog(self))
         await self.add_cog(LeaderboardSyncCog(self))
         await self.add_cog(PoolOnboardingCog(self))

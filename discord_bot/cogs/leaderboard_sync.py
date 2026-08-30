@@ -100,6 +100,10 @@ class LeaderboardSyncCog(commands.Cog):
             title="**Leaderboard**",
             color=discord.Color.blurple(),
             timestamp=timezone.now(),
+            # A pool is bound before anyone has voted, and an embed with no
+            # fields renders as a bare title - which reads as broken rather
+            # than as empty.
+            description=None if rows else "Nobody has scored yet. The first result puts names on the board.",
         )
         last_displayed_rank = 0
 

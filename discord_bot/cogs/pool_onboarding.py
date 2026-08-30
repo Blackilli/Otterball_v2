@@ -1,3 +1,4 @@
+import datetime
 import logging
 
 import discord
@@ -9,9 +10,34 @@ from predictions.models import DayOfWeek, PoolStageRule
 
 logger = logging.getLogger(__name__)
 
-#: Placeholder the leaderboard message is created with. LeaderboardSyncCog
-#: overwrites it with the real embeds on its next pass, at most 30s later.
-LEADERBOARD_PLACEHOLDER = "Leaderboard\n-# soon™"
+#: What the leaderboard message is created with, on the way to being rendered.
+#: `onboard` hands it straight to LeaderboardSyncCog, so this is only ever read
+#: by someone watching the channel in the same second - and by the next sync
+#: pass, at most 30s later, if that cog is not loaded.
+LEADERBOARD_PLACEHOLDER = "**Leaderboard**\n-# Standings appear here as soon as the first match is scored."
+
+
+def next_poll_creation(config, now: datetime.datetime | None = None) -> datetime.datetime | None:
+    """When polls next go up, in the server's timezone, or None if never.
+
+    Used to render the schedule as a Discord timestamp, so a pool whose
+    players are spread across timezones reads the hour in its own.
+    """
+    if not config.poll_creation_weekdays:
+        return None
+
+    now = now or timezone.localtime()
+    weekdays = {int(day) for day in config.poll_creation_weekdays}
+    tz = timezone.get_current_timezone()
+    # DayOfWeek numbers Monday 0, which is date.weekday()'s numbering too.
+    for offset in range(8):
+        day = (now + datetime.timedelta(days=offset)).date()
+        if day.weekday() not in weekdays:
+            continue
+        candidate = timezone.make_aware(datetime.datetime.combine(day, config.poll_creation_time), tz)
+        if candidate > now:
+            return candidate
+    return None
 
 
 def describe_poll_schedule(config) -> str:
@@ -21,10 +47,19 @@ def describe_poll_schedule(config) -> str:
         # check_pool reports this as a FAIL; saying so here beats rendering
         # "matches go up every  at 18:00", which reads like a broken template.
         return f"Polls are not scheduled yet, so the next {window} of matches will not appear on their own."
-    return (
-        f"The next {window} of matches go up every **{days}** at "
-        f"**{config.poll_creation_time:%H:%M}** ({timezone.get_current_timezone_name()})."
-    )
+
+    # Rendered as Discord's own short-time markup rather than the server's
+    # clock: the pool's players are not all in the server's timezone, and
+    # "18:00 (Europe/Berlin)" makes every one of them do the arithmetic. It is
+    # anchored on the *next* occurrence rather than a fixed date so the hour
+    # stays right across a DST change - which does mean the welcome post is
+    # re-rendered once per poll day, and an edit never pings.
+    upcoming = next_poll_creation(config)
+    if upcoming is None:  # unreachable while `days` is non-empty; belt and braces
+        clock = f"**{config.poll_creation_time:%H:%M}** ({timezone.get_current_timezone_name()})"
+    else:
+        clock = f"<t:{int(upcoming.timestamp())}:t>"
+    return f"The next {window} of matches go up every **{days}** at {clock}."
 
 
 async def build_welcome_message(guild_pool: DiscordGuildPool, role: discord.Role | None) -> tuple[str, discord.Embed]:
@@ -54,7 +89,7 @@ async def build_welcome_message(guild_pool: DiscordGuildPool, role: discord.Role
                 name="⏰ Reminders",
                 value=(
                     f"{config.reminder_lead_minutes} minutes before kickoff, anyone without a pick gets named. "
-                    "Turn that off with the **Mute reminders** button on the reminder, or `/notifications`."
+                    "The **Notification settings** button on the reminder turns that off, and back on again."
                 ),
                 inline=False,
             )
@@ -162,6 +197,24 @@ class PoolOnboardingCog(commands.Cog):
                 await msg.pin()
             except discord.HTTPException:
                 logger.warning(f"Failed to pin leaderboard message {msg.id}")
+            await self.render_leaderboard(guild_pool)
+
+    async def render_leaderboard(self, guild_pool: DiscordGuildPool) -> None:
+        """Fill the message in straight away rather than leave a placeholder up.
+
+        LeaderboardSyncCog would get to it within 30 seconds, but the pool's
+        opening post is what the role ping brings people to, so the standings
+        under it should not be a stub when they arrive.
+        """
+        leaderboard_cog = self.bot.get_cog("LeaderboardSyncCog")
+        if leaderboard_cog is None:  # not loaded (tests, or a trimmed bot)
+            return
+        try:
+            await leaderboard_cog.update_leaderboard_msg(guild_pool, force=True)
+        except Exception as e:
+            # The 30s loop will have another go; a failure here must not stop
+            # the rest of the onboarding pass.
+            logger.error(f"Failed first leaderboard render for GuildPool {guild_pool.id}: {e}")
 
     async def upsert_welcome(self, guild_pool: DiscordGuildPool, guild, channel) -> None:
         if not guild_pool.welcome_msg and not guild_pool.announce_welcome:

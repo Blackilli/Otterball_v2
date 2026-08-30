@@ -32,28 +32,72 @@ from typing import Sequence
 import discord
 from discord import ui
 
-from discord_bot.services import aset_missing_vote_reminders
+from discord_bot.services import aget_missing_vote_reminders, aset_missing_vote_reminders
+from predictions.models import PredictionPool
 
-MUTE_BUTTON_TEMPLATE = r"otterball:mute:(?P<pool_id>\d+)"
+NOTIFICATION_BUTTON_TEMPLATE = r"otterball:notifications:(?P<pool_id>\d+)"
 
 
-class MuteRemindersButton(ui.DynamicItem[ui.Button], template=MUTE_BUTTON_TEMPLATE):
-    """ "Mute reminders" on a pre-kickoff reminder, for the pool it belongs to.
+class NotificationSettingsModal(ui.Modal, title="Notification settings"):
+    """The reminder's opt-out, as a form that shows the setting it is changing.
+
+    A button alone can only *act*: it cannot say whether reminders are
+    currently on, and a plain "Mute" is a decision nobody can take back from a
+    channel they are not allowed to write in. The modal opens with the
+    checkbox already reflecting the stored preference, so reading the state and
+    changing it are the same gesture.
+
+    Built fresh per click rather than registered as a persistent view - the
+    button that opens it is what has to survive a restart, and it does.
+    """
+
+    def __init__(self, pool_id: int, pool_name: str, *, enabled: bool):
+        super().__init__()
+        self.pool_id = pool_id
+        # Discord caps a label at 45 characters and its description at 100,
+        # and rejects the whole modal rather than trimming for you.
+        self.reminders = ui.Label(
+            text="Remind me before kickoff"[:45],
+            description=f"Ping me about missing picks in {pool_name}."[:100],
+            component=ui.Checkbox(default=enabled),
+        )
+        self.add_item(self.reminders)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        enabled = self.reminders.component.value
+        await aset_missing_vote_reminders(interaction.user, self.pool_id, enabled=enabled)
+        await interaction.response.send_message(
+            (
+                "🔔 Reminders are **on**. You will be pinged before kickoff when you have no pick."
+                if enabled
+                else "🔕 Reminders are **off**. You will not be pinged about missing picks in this pool."
+            ),
+            ephemeral=True,
+        )
+
+
+class NotificationSettingsButton(ui.DynamicItem[ui.Button], template=NOTIFICATION_BUTTON_TEMPLATE):
+    """ "Notification settings" on a pre-kickoff reminder, for its own pool.
 
     A DynamicItem rather than a stored view: the pool id rides in the custom_id
     and is parsed back out on click, so the button keeps working across bot
     restarts without anything having to be re-registered per message. The bot
     registers the class once (`add_dynamic_items`) in setup_hook.
+
+    It exists because a pool channel is read-only for the people playing in it:
+    this button is the only notification control they can reach, which is why
+    it opens a form they can set either way rather than performing a one-way
+    mute.
     """
 
     def __init__(self, pool_id: int):
         self.pool_id = pool_id
         super().__init__(
             ui.Button(
-                label="Mute reminders",
-                emoji="🔕",
+                label="Notification settings",
+                emoji="🔔",
                 style=discord.ButtonStyle.secondary,
-                custom_id=f"otterball:mute:{pool_id}",
+                custom_id=f"otterball:notifications:{pool_id}",
             )
         )
 
@@ -62,11 +106,12 @@ class MuteRemindersButton(ui.DynamicItem[ui.Button], template=MUTE_BUTTON_TEMPLA
         return cls(int(match["pool_id"]))
 
     async def callback(self, interaction: discord.Interaction) -> None:
-        await aset_missing_vote_reminders(interaction.user, self.pool_id, enabled=False)
-        await interaction.response.send_message(
-            "🔕 Muted. You will not be pinged about missing picks in this pool again.\n"
-            "-# Turn it back on with `/notifications enabled:True`.",
-            ephemeral=True,
+        # Read before opening: the checkbox has to arrive already showing the
+        # stored setting, and send_modal must be the response to this click.
+        enabled = await aget_missing_vote_reminders(interaction.user, self.pool_id)
+        pool_name = await PredictionPool.objects.filter(pk=self.pool_id).values_list("name", flat=True).afirst()
+        await interaction.response.send_modal(
+            NotificationSettingsModal(self.pool_id, pool_name or "this pool", enabled=enabled)
         )
 
 
@@ -184,7 +229,7 @@ class MatchStatusView(ui.LayoutView):
                 container.add_item(
                     ui.Section(
                         ui.TextDisplay(mentions),
-                        accessory=MuteRemindersButton(mute_pool_id),
+                        accessory=NotificationSettingsButton(mute_pool_id),
                     )
                 )
             else:
