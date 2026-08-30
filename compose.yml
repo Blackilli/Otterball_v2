@@ -86,7 +86,11 @@ services:
     # takes the whole host with it. Raise if a service is killed under load;
     # `docker stats` shows what each one actually uses.
     mem_limit: 512m
-    ports: ['${WEB_PORT:-8000}:${WEB_PORT:-8000}']
+    # WEB_BIND is the host address the port is published on: 0.0.0.0 for every
+    # IPv4 address (the default), 127.0.0.1 to keep it behind a local proxy,
+    # `::` for IPv6 - Docker binds that one v6-only, so serving both stacks
+    # means publishing twice. See the Readme's production sample.
+    ports: ['${WEB_BIND:-0.0.0.0}:${WEB_PORT:-8000}:${WEB_PORT:-8000}']
     depends_on:
       db:
         condition: service_healthy
