@@ -5,6 +5,7 @@ from .match_ticker import MatchTickerCog
 from .notification_prefs import NotificationPreferenceCog
 from .poll_creation import PollCreationCog
 from .poll_listener import PollPredictionCog
+from .pool_onboarding import PoolOnboardingCog
 from .reconciliation import ReconciliationCog
 from .remove_garbage import RemoveGarbageCog
 from .role_sync import RoleSyncCog
@@ -18,6 +19,7 @@ __all__ = [
     "ReconciliationCog",
     "RoleSyncCog",
     "PollCreationCog",
+    "PoolOnboardingCog",
     "LeaderboardSyncCog",
     "RemoveGarbageCog",
 ]

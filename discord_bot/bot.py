@@ -46,6 +46,7 @@ class OtterBallBot(commands.Bot):
             NotificationPreferenceCog,
             PollCreationCog,
             PollPredictionCog,
+            PoolOnboardingCog,
             ReconciliationCog,
             RemoveGarbageCog,
             RoleSyncCog,
@@ -61,6 +62,7 @@ class OtterBallBot(commands.Bot):
         await self.add_cog(NotificationPreferenceCog(self))
         await self.add_cog(EmojiSyncCog(self))
         await self.add_cog(LeaderboardSyncCog(self))
+        await self.add_cog(PoolOnboardingCog(self))
         await self.add_cog(RemoveGarbageCog(self))
         logger.info("Syncing application command tree...")
         await self.tree.sync()

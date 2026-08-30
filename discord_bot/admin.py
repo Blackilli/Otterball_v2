@@ -58,11 +58,25 @@ class DiscordGuildPoolAdmin(admin.ModelAdmin):
     yet.
     """
 
-    list_display = ("pool", "guild", "channel", "notification_role", "is_active", "has_leaderboard")
+    list_display = (
+        "pool",
+        "guild",
+        "channel",
+        "notification_role",
+        "is_active",
+        "announce_welcome",
+        "has_welcome",
+        "has_leaderboard",
+    )
     list_filter = ("is_active", "guild")
     list_select_related = ("pool", "guild", "channel", "notification_role")
     autocomplete_fields = ("notification_role",)
     readonly_fields = ("created_at",)
+
+    @admin.display(boolean=True, description="Welcome posted")
+    def has_welcome(self, guild_pool: DiscordGuildPool) -> bool:
+        """Clearing welcome_msg with announce_welcome on reposts the opener."""
+        return guild_pool.welcome_msg is not None
 
     @admin.display(boolean=True, description="Leaderboard posted")
     def has_leaderboard(self, guild_pool: DiscordGuildPool) -> bool:

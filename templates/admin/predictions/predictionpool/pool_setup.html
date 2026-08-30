@@ -79,7 +79,12 @@
                         <a href="{{ pool_change_url }}"><strong>Set the points per round</strong></a> — every
                         round starts on the same default, so scoring is flat until you change it.
                     </li>
-                    <li>The bot picks the schedule up within a minute; no restart needed.</li>
+                    <li>
+                        The bot picks the schedule up within a minute and posts the season's welcome
+                        message plus the pinned leaderboard into the channel — no restart needed. The
+                        welcome is edited in place afterwards, so setting the points corrects it without
+                        pinging the role a second time.
+                    </li>
                 </ol>
             </div>
 

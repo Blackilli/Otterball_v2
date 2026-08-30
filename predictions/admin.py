@@ -213,6 +213,8 @@ class PredictionPoolAdmin(admin.ModelAdmin):
                     "channel": data["channel"],
                     "notification_role": data.get("notification_role"),
                     "is_active": True,
+                    # The bot posts it; this row is the only signal it gets.
+                    "announce_welcome": data.get("announce_welcome", True),
                 },
             )
         return pool

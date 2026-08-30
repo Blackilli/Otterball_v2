@@ -170,6 +170,17 @@ class DiscordGuildPool(models.Model):
         related_name="notification_roles",
     )
     leaderboard_msg = models.BigIntegerField(null=True, blank=True, unique=True)
+    # The one-off "welcome to the new season" post. NULL means it has not been
+    # posted yet, which is what PoolOnboardingCog looks for - so the id is not
+    # decoration, it is the record that stops the channel being welcomed twice.
+    welcome_msg = models.BigIntegerField(null=True, blank=True, unique=True)
+    announce_welcome = models.BooleanField(
+        default=True,
+        help_text=(
+            "Post a welcome message in the channel introducing this pool. "
+            "It goes out once, pings the notification role, and is then kept up to date by edits."
+        ),
+    )
 
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
