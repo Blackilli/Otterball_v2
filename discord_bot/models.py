@@ -174,6 +174,11 @@ class DiscordGuildPool(models.Model):
     # posted yet, which is what PoolOnboardingCog looks for - so the id is not
     # decoration, it is the record that stops the channel being welcomed twice.
     welcome_msg = models.BigIntegerField(null=True, blank=True, unique=True)
+    #: Whether `welcome_msg` was posted as a Components V2 message. Discord
+    #: cannot add the IS_COMPONENTS_V2 flag to a message sent without it, so a
+    #: welcome from the embed era cannot be edited into the current layout -
+    #: PoolOnboardingCog replaces it instead, once, and silently.
+    welcome_is_v2 = models.BooleanField(default=False)
     announce_welcome = models.BooleanField(
         default=True,
         help_text=(

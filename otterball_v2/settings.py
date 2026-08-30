@@ -33,6 +33,12 @@ DEBUG = os.getenv("ENV") != "production"
 
 ALLOWED_HOSTS = (os.getenv("ALLOWED_HOSTS") or "*").split(",")
 
+# Where the read-only public pages are reachable from the outside. The bot
+# links players to their season's fixtures, leaderboard and stats, and it has
+# no request to build an absolute URL from - a Discord message is not served
+# by Django. Trailing slash stripped so a path can always be appended.
+PUBLIC_SITE_URL = (os.getenv("PUBLIC_SITE_URL") or "https://otterball.byilli.com").rstrip("/")
+
 
 # Application definition
 

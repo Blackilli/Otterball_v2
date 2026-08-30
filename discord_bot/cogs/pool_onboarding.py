@@ -1,10 +1,14 @@
+import contextlib
 import datetime
 import logging
 
 import discord
 from discord.ext import commands, tasks
+from django.conf import settings
+from django.urls import reverse
 from django.utils import timezone
 
+from discord_bot.components import WelcomeView
 from discord_bot.models import DiscordGuildPool
 from predictions.models import DayOfWeek, PoolStageRule
 
@@ -40,13 +44,57 @@ def next_poll_creation(config, now: datetime.datetime | None = None) -> datetime
     return None
 
 
+def describe_window(days: int) -> str:
+    """The lookahead as something a person would say.
+
+    "The next 7 day(s) of matches" was the machine showing through: nobody
+    calls a week seven days, and nobody writes "day(s)".
+    """
+    if days == 7:
+        return "A week of fixtures"
+    if days == 14:
+        return "A fortnight of fixtures"
+    if days == 1:
+        return "The next day's fixtures"
+    return f"The next {days} days of fixtures"
+
+
+def describe_lead(minutes: int) -> str:
+    """The reminder's lead time, in the units it was probably meant in."""
+    if minutes == 60:
+        return "An hour before"
+    if minutes % 60 == 0:
+        return f"{minutes // 60} hours before"
+    return f"{minutes} minutes before"
+
+
+def describe_points(points: int) -> str:
+    return f"**{points}** point" if points == 1 else f"**{points}** points"
+
+
+def season_links(season_id: int) -> str:
+    """Where the same season can be read on the web.
+
+    Built with `reverse` rather than by hand so a change to the URLconf breaks
+    loudly here instead of posting three dead links to a whole role, and
+    prefixed with PUBLIC_SITE_URL because a Discord message has no request to
+    make these absolute from.
+    """
+    base = settings.PUBLIC_SITE_URL
+    return (
+        f"[Fixtures]({base}{reverse('sports:season-matches', args=[season_id])}) · "
+        f"[Leaderboard]({base}{reverse('sports:season-leaderboard', args=[season_id])}) · "
+        f"[Stats]({base}{reverse('sports:season-stats', args=[season_id])})"
+    )
+
+
 def describe_poll_schedule(config) -> str:
     days = ", ".join(DayOfWeek(day).label for day in sorted(config.poll_creation_weekdays))
-    window = f"{config.poll_creation_lookahead_days} day(s)"
+    window = describe_window(config.poll_creation_lookahead_days)
     if not days:
         # check_pool reports this as a FAIL; saying so here beats rendering
         # "matches go up every  at 18:00", which reads like a broken template.
-        return f"Polls are not scheduled yet, so the next {window} of matches will not appear on their own."
+        return f"{window} would go up here, but no poll day is set - so nothing posts on its own yet."
 
     # Rendered as Discord's own short-time markup rather than the server's
     # clock: the pool's players are not all in the server's timezone, and
@@ -59,40 +107,41 @@ def describe_poll_schedule(config) -> str:
         clock = f"**{config.poll_creation_time:%H:%M}** ({timezone.get_current_timezone_name()})"
     else:
         clock = f"<t:{int(upcoming.timestamp())}:t>"
-    return f"The next {window} of matches go up every **{days}** at {clock}."
+    return f"{window} lands every **{days}** at {clock}, pinned to this channel."
 
 
-async def build_welcome_message(guild_pool: DiscordGuildPool, role: discord.Role | None) -> tuple[str, discord.Embed]:
-    """The post that opens a pool: how to play, and what a pick is worth.
+async def build_welcome_message(guild_pool: DiscordGuildPool, role: discord.Role | None) -> WelcomeView:
+    """The post that opens a pool: what to do, in the order you do it.
 
-    Everything in it is read from the pool's own configuration rather than
-    written by hand, so a channel cannot be told a schedule or a point
-    distribution the pool does not actually run.
+    Structured as the three steps of actually playing - the polls arrive, you
+    pick before kickoff, the points land - rather than as a list of the pool's
+    settings. It is the first thing a new player reads and the only message
+    that pings the whole role, so it answers "what do I do?" before it
+    describes anything.
+
+    Every value in it is still read from the pool's own configuration, so a
+    channel cannot be told a schedule or a point distribution the pool does
+    not actually run.
     """
     pool = guild_pool.pool
     config = getattr(pool, "configuration", None)
 
-    content = f"# 🦦 Welcome to {pool.name}!"
-    if role:
-        content += f"\n{role.mention}"
-
-    embed = discord.Embed(
-        title=pool.season.name,
-        color=discord.Color.blurple(),
-        description="Predict every match in a Discord poll. Right pick, points on the board.",
-    )
+    steps: list[tuple[str, str]] = []
+    settings_step = None
 
     if config:
-        embed.add_field(name="🗳️ When polls appear", value=describe_poll_schedule(config), inline=False)
+        steps.append(("1️⃣ Wait for the polls", describe_poll_schedule(config)))
+
+        pick = "Each poll closes when its match kicks off."
         if config.reminder_lead_minutes:
-            embed.add_field(
-                name="⏰ Reminders",
-                value=(
-                    f"{config.reminder_lead_minutes} minutes before kickoff, anyone without a pick gets named. "
-                    "The **Notification settings** button on the reminder turns that off, and back on again."
-                ),
-                inline=False,
+            pick += (
+                f" {describe_lead(config.reminder_lead_minutes)} that, anyone without a pick gets named — "
+                "the button switches that ping off, and back on."
             )
+            # Only offered when a reminder actually exists to switch off; the
+            # same rule the reminder itself follows.
+            settings_step = len(steps)
+        steps.append(("2️⃣ Pick before kickoff", pick))
 
     rules = [
         rule
@@ -103,23 +152,37 @@ async def build_welcome_message(guild_pool: DiscordGuildPool, role: discord.Role
     ]
     if rules:
         distribution = "\n".join(
-            f"**{rule.stage.name if rule.stage else 'Every other round'}** — "
-            f"{rule.points_per_correct} point(s) per correct pick"
+            f"{rule.stage.name if rule.stage else 'Every other round'} — "
+            f"{describe_points(rule.points_per_correct)} per correct pick"
             for rule in rules
         )
-        embed.add_field(name="🏆 What a pick is worth", value=distribution, inline=False)
+        steps.append(("3️⃣ Collect", distribution))
 
-    embed.add_field(
-        name="📌 Standings",
-        value=(
-            "The pinned leaderboard keeps itself up to date. Level on points is split by hit rate — "
-            "the share of your picks that scored."
-        ),
-        inline=False,
+    steps.append(
+        (
+            "📌 Where you stand",
+            "The pinned leaderboard keeps itself current. Tied on points, the better hit rate takes it — "
+            "that is the share of your picks that scored.",
+        )
     )
-    # Votes are only ever read off the poll, so a message in chat is not a pick.
-    embed.set_footer(text="Vote in the polls, not in chat. Polls close at kickoff.")
-    return content, embed
+    steps.append(
+        (
+            "🌐 On the web",
+            f"{season_links(pool.season_id)}\n"
+            "Everything the channel shows, plus the rank-over-time chart and the season's own numbers.",
+        )
+    )
+
+    return WelcomeView(
+        heading=f"# 🦦 Welcome to {pool.name}",
+        mention=role.mention if role else None,
+        subheading=f"-# {pool.season.name} · Three things and you are playing.",
+        steps=steps,
+        # Votes are only ever read off the poll, so a message in chat is not a pick.
+        footer="Vote in the polls, not in chat.",
+        settings_pool_id=guild_pool.pool_id if settings_step is not None else None,
+        settings_step=settings_step,
+    )
 
 
 class PoolOnboardingCog(commands.Cog):
@@ -231,25 +294,29 @@ class PoolOnboardingCog(commands.Cog):
             except discord.NotFound:
                 logger.warning(f"Notification role {guild_pool.notification_role_id} missing from server.")
 
-        content, embed = await build_welcome_message(guild_pool, role)
-        # The embed as Discord will store it, which is the only thing an edit
-        # can actually change - cheaper to compare than to enumerate every
-        # field that feeds it.
-        fingerprint = (content, str(embed.to_dict()))
+        view = await build_welcome_message(guild_pool, role)
+        # The components as Discord will store them, which is the only thing an
+        # edit can actually change - cheaper to compare than to enumerate every
+        # value that feeds them.
+        fingerprint = str(view.to_components())
 
         if not guild_pool.welcome_msg:
-            # The role ping is this post's whole delivery mechanism, so it is
-            # not pinned: a pool's pins are for its polls and its leaderboard,
-            # and Discord stops accepting them at 50 per channel.
-            msg = await channel.send(
-                content,
-                embed=embed,
-                allowed_mentions=discord.AllowedMentions(roles=True, everyone=False, users=False),
-            )
-            guild_pool.welcome_msg = msg.id
-            await guild_pool.asave(update_fields=["welcome_msg"])
+            await self.post_welcome(guild_pool, channel, view, ping=True)
             self.welcomes[guild_pool.id] = fingerprint
-            logger.info(f"Welcome message {msg.id} posted for GuildPool {guild_pool.id}.")
+            return
+
+        if not guild_pool.welcome_is_v2:
+            # The IS_COMPONENTS_V2 flag cannot be added to a message that was
+            # sent without it, so a welcome from the embed era cannot be edited
+            # into this one - it has to be replaced. Silently: the role was
+            # already told about this season, and telling it again on nothing
+            # but a deploy is exactly what announce_welcome exists to prevent.
+            logger.info(f"Replacing the pre-V2 welcome for GuildPool {guild_pool.id}.")
+            old_message_id = guild_pool.welcome_msg
+            await self.post_welcome(guild_pool, channel, view, ping=False)
+            with contextlib.suppress(discord.HTTPException):
+                await channel.get_partial_message(old_message_id).delete()
+            self.welcomes[guild_pool.id] = fingerprint
             return
 
         if self.welcomes.get(guild_pool.id) == fingerprint:
@@ -257,10 +324,27 @@ class PoolOnboardingCog(commands.Cog):
 
         try:
             msg = await channel.fetch_message(guild_pool.welcome_msg)
-            await msg.edit(content=content, embed=embed)
+            await msg.edit(view=view)
         except discord.NotFound:
             # Someone deleted it. Reposting would ping the role again for a
             # season that is already under way, so take it as intentional -
             # and cache the render so this stops refetching every minute.
             logger.warning(f"Welcome message {guild_pool.welcome_msg} for GuildPool {guild_pool.id} is gone.")
         self.welcomes[guild_pool.id] = fingerprint
+
+    @staticmethod
+    async def post_welcome(guild_pool: DiscordGuildPool, channel, view: WelcomeView, *, ping: bool) -> None:
+        """Send the card and record it as this pool's welcome.
+
+        Deliberately not pinned: a pool's pins are for its polls and its
+        leaderboard, and Discord stops accepting them at 50 per channel. The
+        role ping is this post's delivery mechanism instead - and a mention
+        inside a V2 component still notifies, so moving off the embed did not
+        cost that.
+        """
+        mentions = discord.AllowedMentions(roles=ping, everyone=False, users=False)
+        msg = await channel.send(view=view, allowed_mentions=mentions)
+        guild_pool.welcome_msg = msg.id
+        guild_pool.welcome_is_v2 = True
+        await guild_pool.asave(update_fields=["welcome_msg", "welcome_is_v2"])
+        logger.info(f"Welcome message {msg.id} posted for GuildPool {guild_pool.id}.")
