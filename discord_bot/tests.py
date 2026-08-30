@@ -16,11 +16,21 @@ from discord_bot.cogs.guild_sync import GuildSyncCog
 from discord_bot.cogs.leaderboard_sync import LeaderboardSyncCog
 from discord_bot.cogs.match_ticker import MatchTickerCog
 from discord_bot.cogs.poll_creation import matches_needing_polls
-from discord_bot.cogs.pool_onboarding import LEADERBOARD_PLACEHOLDER, PoolOnboardingCog
+from discord_bot.cogs.pool_onboarding import (
+    LEADERBOARD_PLACEHOLDER,
+    PoolOnboardingCog,
+    describe_poll_schedule,
+    next_poll_creation,
+)
 from discord_bot.cogs.reconciliation import ReconciliationCog
 from discord_bot.cogs.remove_garbage import RemoveGarbageCog
 from discord_bot.cogs.role_sync import RoleSyncCog
-from discord_bot.components import FIGURE_SPACE, HALF_DIGIT, MuteRemindersButton
+from discord_bot.components import (
+    FIGURE_SPACE,
+    HALF_DIGIT,
+    NotificationSettingsButton,
+    NotificationSettingsModal,
+)
 from discord_bot.constants import DISCORD_POLL_ANSWER_ORDER_MAP
 from discord_bot.models import (
     ActiveMatchMessage,
@@ -32,7 +42,11 @@ from discord_bot.models import (
     MatchMessageState,
     PoolNotificationPreference,
 )
-from discord_bot.services import aget_or_create_profile, aset_missing_vote_reminders
+from discord_bot.services import (
+    aget_missing_vote_reminders,
+    aget_or_create_profile,
+    aset_missing_vote_reminders,
+)
 from discord_bot.utils import (
     forget_unreachable_containers,
     is_container_unreachable,
@@ -158,9 +172,13 @@ class FakeGuild:
 
 
 class FakeBot:
-    def __init__(self, channel=None, guilds=None):
+    def __init__(self, channel=None, guilds=None, cogs=None):
         self._channel = channel
         self.guilds = guilds or []
+        self._cogs = cogs or {}
+
+    def get_cog(self, name):
+        return self._cogs.get(name)
 
     def get_channel(self, channel_id):
         return self._channel
@@ -1198,8 +1216,8 @@ class MatchStatusViewTests(TestCase):
         self.assertLess(sum(len(t) for t in text_of(view)), 4000)
 
 
-class MuteButtonTests(TestCase):
-    """Covers the Mute button on the pre-kickoff reminder.
+class NotificationSettingsButtonTests(TestCase):
+    """Covers the notification-settings button on the pre-kickoff reminder.
 
     It is a DynamicItem: the pool id travels in the custom_id and is parsed
     back out on click, which is what lets a button posted before the last
@@ -1248,7 +1266,7 @@ class MuteButtonTests(TestCase):
 
         buttons = self.buttons_in(view)
         self.assertEqual(len(buttons), 1)
-        self.assertEqual(buttons[0]["custom_id"], f"otterball:mute:{self.pool.id}")
+        self.assertEqual(buttons[0]["custom_id"], f"otterball:notifications:{self.pool.id}")
         self.assertIn("<@222>", " ".join(text_of(view)))
         # Mentions only notify when the allowed-mentions object permits it.
         self.assertTrue(allowed_mentions.users)
@@ -1267,10 +1285,10 @@ class MuteButtonTests(TestCase):
         self.assertIsNone(allowed_mentions)
 
     def test_the_custom_id_round_trips_through_the_dynamic_template(self):
-        button = MuteRemindersButton(self.pool.id)
+        button = NotificationSettingsButton(self.pool.id)
         custom_id = button.item.custom_id
 
-        parsed = MuteRemindersButton.__discord_ui_compiled_template__.fullmatch(custom_id)
+        parsed = NotificationSettingsButton.__discord_ui_compiled_template__.fullmatch(custom_id)
 
         self.assertIsNotNone(parsed, "the emitted custom_id must match the template that dispatches it")
         self.assertEqual(int(parsed["pool_id"]), self.pool.id)
@@ -1291,6 +1309,44 @@ class MuteButtonTests(TestCase):
 
         profile = await DiscordProfile.objects.aget(id=999)
         self.assertEqual(await PoolNotificationPreference.aget_muted_user_ids(self.pool.id), {profile.user_id})
+
+    async def test_the_form_opens_showing_the_stored_setting(self):
+        """The checkbox is the only place a player can read their own setting,
+        so it has to arrive already ticked the right way."""
+        member = FakeMember(444, name="settler")
+        modal = NotificationSettingsModal(self.pool.id, self.pool.name, enabled=True)
+        self.assertTrue(modal.reminders.component.default)
+
+        await aset_missing_vote_reminders(member, self.pool.id, enabled=False)
+
+        enabled = await aget_missing_vote_reminders(member, self.pool.id)
+        self.assertFalse(enabled)
+        modal = NotificationSettingsModal(self.pool.id, self.pool.name, enabled=enabled)
+        self.assertFalse(modal.reminders.component.default)
+
+    async def test_someone_who_never_touched_it_reads_as_on(self):
+        """An absent row means notify, and merely opening the form must not
+        create an account for someone who is only looking."""
+        self.assertTrue(await aget_missing_vote_reminders(FakeMember(555, name="lurker"), self.pool.id))
+        self.assertFalse(await DiscordProfile.objects.filter(id=555).aexists())
+
+    async def test_the_form_writes_both_ways(self):
+        member = FakeMember(666, name="switcher")
+
+        await aset_missing_vote_reminders(member, self.pool.id, enabled=False)
+        self.assertEqual(len(await PoolNotificationPreference.aget_muted_user_ids(self.pool.id)), 1)
+
+        await aset_missing_vote_reminders(member, self.pool.id, enabled=True)
+        self.assertEqual(await PoolNotificationPreference.aget_muted_user_ids(self.pool.id), set())
+
+    def test_the_form_fits_inside_discords_label_limits(self):
+        """Discord rejects the whole modal rather than trimming for you, and a
+        pool can be named anything."""
+        modal = NotificationSettingsModal(self.pool.id, "N" * 200, enabled=True)
+
+        self.assertLessEqual(len(modal.title), 45)
+        self.assertLessEqual(len(modal.reminders.text), 45)
+        self.assertLessEqual(len(modal.reminders.description), 100)
 
 
 class ReminderStaysInSyncTests(TestCase):
@@ -1947,6 +2003,69 @@ class PoolOnboardingTests(TestCase):
         self.assertEqual(guild_pool.welcome_msg, self.discord_channel.sends[0]["message"].id)
         self.assertEqual(guild_pool.leaderboard_msg, self.discord_channel.sends[1]["message"].id)
 
+    async def test_the_leaderboard_is_rendered_the_moment_it_is_created(self):
+        """The welcome's role ping is what brings people to the channel, so the
+        standings beneath it must not still be a placeholder when they arrive."""
+        leaderboard_cog = LeaderboardSyncCog(
+            bot=FakeBot(channel=self.discord_channel, guilds=[FakeGuild(self.guild.id, "Test Guild")])
+        )
+        leaderboard_cog.cog_unload()
+        bot = FakeBot(
+            channel=self.discord_channel,
+            guilds=[FakeGuild(self.guild.id, "Test Guild", roles=[self.discord_role])],
+            cogs={"LeaderboardSyncCog": leaderboard_cog},
+        )
+        cog = PoolOnboardingCog(bot=bot)
+        cog.cog_unload()
+
+        await self.run_pass(cog)
+
+        leaderboard = self.discord_channel.sends[1]["message"]
+        self.assertEqual(len(leaderboard.edits), 1)
+        titles = [embed.title for embed in leaderboard.edits[0]["embeds"]]
+        self.assertIn("**Leaderboard**", titles)
+        self.assertIn("Point Distribution", titles)
+
+    async def test_a_failing_first_render_leaves_the_placeholder_and_the_pass_intact(self):
+        """The 30s loop will have another go; onboarding must not stop here."""
+
+        class ExplodingLeaderboardCog:
+            async def update_leaderboard_msg(self, guild_pool, force=False):
+                raise RuntimeError("Discord said no")
+
+        bot = FakeBot(
+            channel=self.discord_channel,
+            guilds=[FakeGuild(self.guild.id, "Test Guild", roles=[self.discord_role])],
+            cogs={"LeaderboardSyncCog": ExplodingLeaderboardCog()},
+        )
+        cog = PoolOnboardingCog(bot=bot)
+        cog.cog_unload()
+
+        await self.run_pass(cog)
+
+        guild_pool = await DiscordGuildPool.objects.aget(pk=self.guild_pool.pk)
+        self.assertEqual(guild_pool.leaderboard_msg, self.discord_channel.sends[1]["message"].id)
+
+    def test_the_schedule_lands_on_the_next_configured_weekday(self):
+        config = PoolConfiguration.objects.get(pool=self.pool)  # Wednesdays, 18:00
+
+        # A Monday, well before the hour.
+        monday = timezone.make_aware(datetime.datetime(2026, 8, 31, 9, 0))
+        upcoming = next_poll_creation(config, now=monday)
+        self.assertEqual((upcoming.date(), upcoming.hour), (datetime.date(2026, 9, 2), 18))
+
+        # The day itself, after it has already fired: the next one is a week on.
+        wednesday_evening = timezone.make_aware(datetime.datetime(2026, 9, 2, 19, 0))
+        upcoming = next_poll_creation(config, now=wednesday_evening)
+        self.assertEqual(upcoming.date(), datetime.date(2026, 9, 9))
+
+    def test_an_unscheduled_pool_has_no_next_poll_creation(self):
+        config = PoolConfiguration.objects.get(pool=self.pool)
+        config.poll_creation_weekdays = []
+
+        self.assertIsNone(next_poll_creation(config))
+        self.assertIn("not scheduled yet", describe_poll_schedule(config))
+
     async def test_only_the_leaderboard_is_pinned(self):
         """Pins are capped at 50 a channel and the polls need them; the
         welcome post is delivered by its role ping instead."""
@@ -1970,7 +2089,12 @@ class PoolOnboardingTests(TestCase):
         embed = self.discord_channel.sends[0]["embed"]
         values = {field.name: field.value for field in embed.fields}
         self.assertIn("Wednesday", values["🗳️ When polls appear"])
-        self.assertIn("18:00", values["🗳️ When polls appear"])
+        # The hour is Discord's own markup, so every player reads it in their
+        # own timezone rather than the server's.
+        config = await PoolConfiguration.objects.aget(pool=self.pool)
+        expected = int(next_poll_creation(config).timestamp())
+        self.assertIn(f"<t:{expected}:t>", values["🗳️ When polls appear"])
+        self.assertNotIn("Europe/", values["🗳️ When polls appear"])
         self.assertIn("**Regular Season** — 1 point(s) per correct pick", values["🏆 What a pick is worth"])
         self.assertIn("**Super Bowl** — 5 point(s) per correct pick", values["🏆 What a pick is worth"])
         self.assertIn("60 minutes", values["⏰ Reminders"])
