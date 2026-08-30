@@ -1,10 +1,8 @@
 import logging
 import pathlib
-from datetime import datetime
 
 import discord
 from discord.ext import commands, tasks
-from django.utils import timezone
 
 from discord_bot.cogs.emoji_sync import EmojiSyncCog
 
@@ -42,6 +40,7 @@ class OtterBallBot(commands.Bot):
         logger.info("Initializing bot cogs...")
         from discord_bot.cogs import (
             ChannelSyncCog,
+            GuildSyncCog,
             LeaderboardSyncCog,
             MatchTickerCog,
             NotificationPreferenceCog,
@@ -54,6 +53,7 @@ class OtterBallBot(commands.Bot):
 
         await self.add_cog(PollCreationCog(self))
         await self.add_cog(ChannelSyncCog(self))
+        await self.add_cog(GuildSyncCog(self))
         await self.add_cog(ReconciliationCog(self))
         await self.add_cog(PollPredictionCog(self))
         await self.add_cog(RoleSyncCog(self))
@@ -68,10 +68,3 @@ class OtterBallBot(commands.Bot):
     @tasks.loop(minutes=1.0)
     async def bot_heartbeat_loop(self):
         self.heartbeat_file.touch(exist_ok=True)
-
-    async def on_ready(self):
-        logger.info("Starting background database reconciliation check...")
-        try:
-            logger.info("Database reconciliation completed successfully.")
-        except Exception as e:
-            logger.error(f"Reconciliation error on startup: {e}", exc_info=True)

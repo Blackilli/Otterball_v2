@@ -6,7 +6,7 @@ from discord.ext import commands, tasks
 from django.utils import timezone
 
 from discord_bot.models import DiscordGuildPool, DiscordProfile
-from predictions.models import PoolStageRule, Prediction
+from predictions.models import PoolStageRule, Prediction, hit_rate_percent
 from users.models import User
 
 logger = logging.getLogger(__name__)
@@ -65,11 +65,27 @@ class LeaderboardSyncCog(commands.Cog):
             ).distinct()
         }
 
-        raw_leaderboard_data = []
+        # One pass, reused for both the change-detection fingerprint and the
+        # rendering below. It used to walk aget_leaderboard twice - two full
+        # queries every 30 seconds, and two places to keep in step whenever a
+        # column is added to the line.
+        rows: list[tuple[int, str, int, int]] = []
+        skipped_user_ids: list[int] = []
         async for rank, user, points in guild_pool.pool.aget_leaderboard():
             profile = user_cache.get(user.id)
-            if profile:
-                raw_leaderboard_data.append((rank, profile.global_name, points))
+            if not profile:
+                skipped_user_ids.append(user.id)
+                continue
+            rows.append(
+                (
+                    rank,
+                    profile.global_name,
+                    points,
+                    # Rounded by the same helper the website calls, so a player
+                    # cannot read two different numbers in the two places.
+                    hit_rate_percent(user.pool_correct_count, user.pool_prediction_count),
+                )
+            )
 
         raw_rules_data = []
         async for stage_rule in (
@@ -81,7 +97,9 @@ class LeaderboardSyncCog(commands.Cog):
             stage_name = stage_rule.stage.name if stage_rule.stage else "Global Fallback / Baseline"
             raw_rules_data.append((stage_name, stage_rule.points_per_correct))
 
-        current_fingerprint = (tuple(raw_leaderboard_data), tuple(raw_rules_data))
+        # Hit rate is part of the fingerprint, so a pick that changes accuracy
+        # without changing anyone's points still redraws the message.
+        current_fingerprint = (tuple(rows), tuple(raw_rules_data))
 
         if self.leaderboards.get(guild_pool.id) == current_fingerprint and not force:
             logger.info(f"Leaderboard for Pool {guild_pool.id} unchanged, skipping update.")
@@ -101,6 +119,9 @@ class LeaderboardSyncCog(commands.Cog):
             except discord.HTTPException:
                 logger.warning(f"Failed to pin leaderboard message {msg.id}")
 
+        if skipped_user_ids:
+            logger.warning(f"No Discord profile for users {skipped_user_ids}, left off the leaderboard.")
+
         leaderboard_embed = discord.Embed(
             title="**Leaderboard**",
             color=discord.Color.blurple(),
@@ -108,13 +129,8 @@ class LeaderboardSyncCog(commands.Cog):
         )
         last_displayed_rank = 0
 
-        async for rank, user, points in guild_pool.pool.aget_leaderboard():
-            profile = user_cache.get(user.id)
-            if not profile:
-                logger.warning(f"User {user.id} not found in cache, skipping.")
-                continue
-
-            field_value = f"**{profile.global_name}** ({points})"
+        for rank, global_name, points, hit_rate in rows:
+            field_value = f"**{global_name}** ({points} · {hit_rate}%)"
 
             rank_header = "———`{rank}`———"
 
@@ -164,7 +180,9 @@ class LeaderboardSyncCog(commands.Cog):
                     value=field_value,
                 )
 
-        leaderboard_embed.set_footer(text=f"Last updated")
+        # Says what the two numbers on every line are; Discord renders the
+        # embed's timestamp after this text.
+        leaderboard_embed.set_footer(text="points · hit rate")
 
         point_distribution_embed = discord.Embed(title="Point Distribution")
 

@@ -15,14 +15,17 @@ Including another URLconf
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
 
-from django.conf.urls.static import static
 from django.contrib import admin
 from django.http import HttpResponse
-from django.urls import path
-
-from otterball_v2 import settings
+from django.urls import include, path
 
 urlpatterns = [
     path("health/", lambda request: HttpResponse("OK", content_type="text/plain")),
     path("admin/", admin.site.urls),
-] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+    # Last, so it can own "" without shadowing anything above it.
+    path("", include("sports.urls")),
+]
+# /media/ is not routed here: it is served by
+# otterball_v2.middleware.WhiteNoiseWithMediaMiddleware, in every environment.
+# `static()` used to do it and returns nothing when DEBUG is off, so crests
+# worked in development and 404ed in production.

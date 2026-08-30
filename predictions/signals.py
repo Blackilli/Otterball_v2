@@ -44,8 +44,10 @@ def process_match_update(match: Match) -> None:
 
 
 @receiver(post_save, sender=Match)
-def receive_match_update(sender, instance: Match, created: bool, **kwargs):
-    if created or instance.status != MatchStatus.FINISHED:
+def receive_match_update(sender, instance: Match, created: bool, raw: bool = False, **kwargs):
+    # `raw` means a fixture load (import_db/loaddata): the points in the dump are already final,
+    # so re-scoring every restored match would be pure churn.
+    if created or raw or instance.status != MatchStatus.FINISHED:
         return
     try:
         transaction.on_commit(partial(process_match_update, instance), robust=True)

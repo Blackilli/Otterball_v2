@@ -1,9 +1,9 @@
 import csv
 import logging
-from itertools import groupby
 
 from django.core.management.base import BaseCommand, CommandError
 
+from predictions.history import build_rank_history
 from predictions.models import Prediction, PredictionPool
 from sports.models import MatchStatus
 
@@ -32,22 +32,25 @@ class Command(BaseCommand):
             .order_by("match__kickoff", "match_id")
         )
 
-        usernames = sorted({prediction.user.username for prediction in predictions})
-        totals = dict.fromkeys(usernames, 0)
+        usernames_by_id = {prediction.user_id: prediction.user.username for prediction in predictions}
+        usernames = sorted(usernames_by_id.values())
+        user_ids_by_username = {username: user_id for user_id, username in usernames_by_id.items()}
 
-        rows = []
-        for _match_id, match_predictions in groupby(predictions, key=lambda p: p.match_id):
-            match_predictions = list(match_predictions)
-            match = match_predictions[0].match
-            for prediction in match_predictions:
-                totals[prediction.user.username] += prediction.points_awarded
-            rows.append(
-                [
-                    match.kickoff.isoformat(),
-                    f"{match.home_team} vs. {match.away_team}",
-                    *(totals[username] for username in usernames),
-                ]
-            )
+        # Shared with the stats page's rank-over-time chart, so the CSV and the
+        # chart cannot disagree about what the table looked like at match 40.
+        # A player with no pick yet is absent from `standings` and columns out
+        # as 0, which is what the running total said before they joined too.
+        rows = [
+            [
+                entry.match.kickoff.isoformat(),
+                f"{entry.match.home_team} vs. {entry.match.away_team}",
+                *(
+                    standing.points if (standing := entry.standings.get(user_ids_by_username[username])) else 0
+                    for username in usernames
+                ),
+            ]
+            for entry in build_rank_history(predictions)
+        ]
 
         output = options["output"]
         stream = open(output, "w", newline="") if output else self.stdout

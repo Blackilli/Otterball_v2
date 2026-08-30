@@ -8,7 +8,8 @@ from django.contrib.postgres.fields import ArrayField
 from django.core.exceptions import ValidationError
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
-from django.db.models import Count, Q, Sum
+from django.db.models import Case, Count, FloatField, Q, Sum, Value, When
+from django.db.models.functions import Cast
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 from django.utils import timezone
@@ -45,6 +46,52 @@ MAX_POLL_LOOKAHEAD_DAYS = 32
 # pools actually run on, and raising it retroactively would front-load a
 # month of polls into channels that expect seven days of them.
 DEFAULT_POLL_LOOKAHEAD_DAYS = 7
+
+
+class CompetitionRanker:
+    """Standard Competition Ranking (1-2-2-4) over a run of descending standings.
+
+    Ties share a rank and the next rank skips by the size of the tie, so two
+    players level on 40 points and the same accuracy are both 2nd and the next
+    is 4th.
+
+    A tiny state machine rather than a loop in each caller, because there are
+    two - the live leaderboard both surfaces read, and the rank-over-time
+    history behind the stats page - and a ranking rule that disagreed between
+    the chart and the table it sits above would be very hard to spot.
+
+    `rank` must be fed standings in descending order, which is what
+    `PredictionPool.aget_user_with_points` and `predictions.history` guarantee.
+    """
+
+    def __init__(self):
+        self._rank = 1
+        self._tied = 0
+        self._previous = None
+
+    def rank(self, standing) -> int:
+        if self._previous is not None and standing < self._previous:
+            self._rank += self._tied
+            self._tied = 1
+        else:
+            self._tied += 1
+
+        self._previous = standing
+        return self._rank
+
+
+def hit_rate_percent(correct: int, picks: int) -> int:
+    """Correct picks as a whole percentage of picks made.
+
+    The one place the displayed accuracy is rounded, so the website and the
+    pinned Discord leaderboard cannot show the same player two different
+    numbers. Ranking does *not* use this - it compares the unrounded ratio (see
+    PredictionPool.aget_leaderboard), because two players a tenth of a point
+    apart should not be tied by a rounding step.
+    """
+    if not picks:
+        return 0
+    return round(correct * 100 / picks)
 
 
 class DayOfWeek(models.IntegerChoices):
@@ -98,9 +145,13 @@ class PredictionPool(models.Model):
         # come back with total_points = NULL, and Postgres sorts NULLs first on
         # a DESC order - so members of an unrelated pool would silently occupy
         # the top ranks and push this pool's players down.
-        # Ties are broken by id purely so the order is stable: the leaderboard
-        # cog diffs a fingerprint of this list to decide whether to edit its
-        # Discord message, and an unstable order would make it edit forever.
+        # Order: points, then accuracy, then id. The id is there purely so the
+        # order is stable - the leaderboard cog diffs a fingerprint of this
+        # list to decide whether to edit its Discord message, and an unstable
+        # order would make it edit forever.
+        # All three aggregates walk the same `predictions` relation and say so
+        # through `filter=`, so they share one join and become FILTER clauses
+        # rather than multiplying each other's rows.
         async for user in (
             User.objects.annotate(
                 total_points=Sum(
@@ -111,27 +162,49 @@ class PredictionPool(models.Model):
                     "predictions",
                     filter=Q(predictions__pool=self),
                 ),
+                pool_correct_count=Count(
+                    "predictions",
+                    filter=Q(predictions__pool=self, predictions__points_awarded__gt=0),
+                ),
+            )
+            .annotate(
+                # The tiebreaker, unrounded. Guarded rather than relying on the
+                # HAVING below to spare it: the ratio is computed in the SELECT
+                # list, and Postgres raises on division by zero where SQLite
+                # quietly returns NULL.
+                pool_hit_rate=Case(
+                    When(pool_prediction_count=0, then=Value(0.0)),
+                    default=Cast("pool_correct_count", FloatField()) / Cast("pool_prediction_count", FloatField()),
+                    output_field=FloatField(),
+                ),
             )
             .filter(pool_prediction_count__gt=0)
-            .order_by("-total_points", "id")
+            # Every caller renders a name, and the Discord profile is where
+            # the name people know each other by lives: one LEFT JOIN on a
+            # one-to-one beats a query per player.
+            .select_related("discord_profile")
+            .order_by("-total_points", "-pool_hit_rate", "id")
             .aiterator()
         ):
             yield user, (user.total_points or 0)
 
     async def aget_leaderboard(self) -> AsyncGenerator[tuple[int, User, int], Any]:
-        current_rank = 1
-        tied_count = 0
-        previous_points = None
+        """Standard Competition Ranking (1-2-2-4) over points, then accuracy.
+
+        Points alone reward turning up as much as being right: someone who
+        votes on every match outranks a sharper player who missed a week, and
+        on equal points they used to share a rank. Accuracy separates them, so
+        a tie now means level on *both* - same points and the same share of
+        picks right.
+
+        The comparison uses `pool_hit_rate`, the unrounded ratio the database
+        ordered by, not the percentage the pages display - the two must not
+        disagree about which player is ahead.
+        """
+        ranker = CompetitionRanker()
 
         async for user, points in self.aget_user_with_points():
-            if previous_points is not None and points < previous_points:
-                current_rank += tied_count
-                tied_count = 1
-            else:
-                tied_count += 1
-
-            previous_points = points
-            yield current_rank, user, points
+            yield ranker.rank((points, user.pool_hit_rate)), user, points
 
 
 class PoolConfiguration(models.Model):

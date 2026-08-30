@@ -1,0 +1,227 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}{{ season.name }} · Stats — Otterball{% endblock %}
+
+{% block content %}
+    <div class="page-head">
+        <h1>{{ season.name }}</h1>
+        <p>{{ season.competition.name }} · season stats</p>
+        <nav class="view-tabs" aria-label="Views">
+            <a class="pill" href="{% url 'sports:season-matches' season.id %}">Fixtures</a>
+            {% if has_bracket %}
+                <a class="pill" href="{% url 'sports:season-bracket' season.id %}">Bracket</a>
+            {% endif %}
+            <a class="pill" href="{% url 'sports:season-leaderboard' season.id %}">Leaderboard</a>
+            <a class="pill" aria-current="page" href="{% url 'sports:season-stats' season.id %}">Stats</a>
+        </nav>
+    </div>
+
+    {% for board in boards %}
+        <section class="board">
+            <div class="board-head">
+                <h2>{{ board.pool.name }}</h2>
+                {% if not board.pool.is_active %}<span class="badge">Closed</span>{% endif %}
+            </div>
+
+            {% if board.matches %}
+                <ul class="kpi-row">
+                    <li><span class="kpi-value">{{ board.matches }}</span><span class="kpi-label">matches scored</span></li>
+                    <li><span class="kpi-value">{{ board.players }}</span><span class="kpi-label">players</span></li>
+                    <li><span class="kpi-value">{{ board.picks }}</span><span class="kpi-label">picks made</span></li>
+                    <li><span class="kpi-value">{{ board.crowd_hit_rate }}%</span><span class="kpi-label">called right</span></li>
+                </ul>
+
+                {% if board.chart %}
+                    {% include "sports/_rank_chart.html" with chart=board.chart %}
+
+                    <details class="chart-table">
+                        <summary>Table view</summary>
+                        <div class="table-scroll">
+                            <table class="standings">
+                                <thead>
+                                <tr>
+                                    <th scope="col" class="col-rank">#</th>
+                                    <th scope="col">Player</th>
+                                    <th scope="col" class="num">Best</th>
+                                    <th scope="col" class="num">Worst</th>
+                                    <th scope="col" class="num">Hit rate</th>
+                                    <th scope="col" class="num">Points</th>
+                                </tr>
+                                </thead>
+                                <tbody>
+                                {% for series in board.chart.series %}
+                                    <tr{% if series.final_rank == 1 %} class="leader"{% endif %}>
+                                        <td class="col-rank">{{ series.final_rank }}</td>
+                                        <th scope="row" class="player">
+                                            <span class="swatch {{ series.css_class }}" data-user="{{ series.user_id }}"></span>{{ series.name }}
+                                        </th>
+                                        <td class="num">{{ series.best_rank }}</td>
+                                        <td class="num">{{ series.worst_rank }}</td>
+                                        <td class="num rate">{{ series.hit_rate }}%</td>
+                                        <td class="num points">{{ series.points }}</td>
+                                    </tr>
+                                {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </details>
+                {% else %}
+                    <div class="empty">
+                        <p>Not enough scored matches for a chart yet.</p>
+                        <p>Rank over time needs at least two — one match is a dot, not a line.</p>
+                    </div>
+                {% endif %}
+
+                {% if board.crowd %}
+                    <div class="callout">
+                        <p class="callout-lead">
+                            Voting with the majority every time would have finished
+                            <strong>{{ board.crowd.rank }}{% if board.crowd.rank == 1 %}st{% elif board.crowd.rank == 2 %}nd{% elif board.crowd.rank == 3 %}rd{% else %}th{% endif %}</strong>
+                            — {{ board.crowd.points }} points at {{ board.crowd.hit_rate }}%, ahead of
+                            {{ board.crowd.beaten }} of the {{ board.players }} players.
+                        </p>
+                        <p class="callout-note">
+                            The crowd called {{ board.crowd.correct }} of {{ board.crowd.picks }} matches
+                            right{% if board.crowd.abstained %}, and had no pick on
+                            {{ board.crowd.abstained }} the pool split evenly{% endif %}.
+                        </p>
+                    </div>
+                {% endif %}
+
+                <div class="stat-pair">
+                    {% if board.streaks %}
+                        <section>
+                            <h3 class="section-heading">Longest runs</h3>
+                            <p class="section-note">Most consecutive correct picks.</p>
+                            <div class="table-scroll">
+                                <table class="standings">
+                                    <thead>
+                                    <tr>
+                                        <th scope="col">Player</th>
+                                        <th scope="col" class="num">In a row</th>
+                                    </tr>
+                                    </thead>
+                                    <tbody>
+                                    {% for streak in board.streaks %}
+                                        <tr{% if forloop.first %} class="leader"{% endif %}>
+                                            <th scope="row" class="player">{{ streak.name }}</th>
+                                            <td class="num points">{{ streak.length }}</td>
+                                        </tr>
+                                    {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </section>
+                    {% endif %}
+
+                    {% if board.contrarians %}
+                        <section>
+                            <h3 class="section-heading">Against the crowd</h3>
+                            <p class="section-note">
+                                Who backed the minority pick most often{% if board.crowd %} — the majority
+                                was right {{ board.crowd.hit_rate }}% of the time{% endif %}.
+                            </p>
+                            <div class="table-scroll">
+                                <table class="standings">
+                                    <thead>
+                                    <tr>
+                                        <th scope="col">Player</th>
+                                        <th scope="col" class="num">Times</th>
+                                        <th scope="col" class="num">Right</th>
+                                        <th scope="col" class="num">Rate</th>
+                                    </tr>
+                                    </thead>
+                                    <tbody>
+                                    {% for rebel in board.contrarians %}
+                                        <tr>
+                                            <th scope="row" class="player">{{ rebel.name }}</th>
+                                            <td class="num">{{ rebel.against }}</td>
+                                            <td class="num">{{ rebel.right }}</td>
+                                            <td class="num rate">{{ rebel.percent }}%</td>
+                                        </tr>
+                                    {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </section>
+                    {% endif %}
+                </div>
+
+                {% if board.outcome_mix %}
+                    <h3 class="section-heading">Picked vs happened</h3>
+                    <p class="section-note">
+                        The pool's taste in results, against how matches actually ended.
+                    </p>
+                    <ul class="mix">
+                        {% for mix in board.outcome_mix %}
+                            <li>
+                                <p class="mix-name">
+                                    <span class="swatch {{ mix.css_class }}"></span>{{ mix.label }}
+                                    <span class="mix-bias">{{ mix.bias_label }}</span>
+                                </p>
+                                <div class="mix-pair">
+                                    <span class="mix-key">picked</span>
+                                    <span class="mix-bar">
+                                        <span class="{{ mix.css_class }}" style="width: {{ mix.predicted_percent }}%"></span>
+                                    </span>
+                                    <span class="mix-value">{{ mix.predicted_percent }}%</span>
+                                </div>
+                                <div class="mix-pair">
+                                    <span class="mix-key">happened</span>
+                                    <span class="mix-bar">
+                                        <span class="{{ mix.css_class }} dim" style="width: {{ mix.actual_percent }}%"></span>
+                                    </span>
+                                    <span class="mix-value">{{ mix.actual_percent }}%</span>
+                                </div>
+                            </li>
+                        {% endfor %}
+                    </ul>
+                {% endif %}
+
+                {% if board.toughest_calls %}
+                    <h3 class="section-heading">Toughest calls</h3>
+                    <p class="section-note">The scored matches the fewest people got right.</p>
+                    <div class="table-scroll">
+                        <table class="standings">
+                            <thead>
+                            <tr>
+                                <th scope="col">Match</th>
+                                <th scope="col" class="num">Result</th>
+                                <th scope="col" class="num">Called it</th>
+                                <th scope="col" class="num">Rate</th>
+                            </tr>
+                            </thead>
+                            <tbody>
+                            {% for call in board.toughest_calls %}
+                                <tr>
+                                    <th scope="row" class="player">
+                                        {{ call.match.home_team.name }} v {{ call.match.away_team.name }}
+                                    </th>
+                                    <td class="num">{{ call.match.home_score }}–{{ call.match.away_score }}</td>
+                                    <td class="num">{{ call.correct }} of {{ call.picks }}</td>
+                                    <td class="num rate">{{ call.percent }}%</td>
+                                </tr>
+                            {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                {% endif %}
+            {% else %}
+                <div class="empty">
+                    <p>Nothing scored yet.</p>
+                    <p>Stats appear once matches in this pool have finished and points are in.</p>
+                </div>
+            {% endif %}
+        </section>
+    {% empty %}
+        <div class="empty">
+            <p>No pool plays this season.</p>
+            <p>Create one with <code>manage.py create_pool</code> and its stats appear here.</p>
+        </div>
+    {% endfor %}
+{% endblock %}
+
+{% block scripts %}
+    <script type="module" src="{% static 'sports/js/rank-chart.js' %}"></script>
+{% endblock %}

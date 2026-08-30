@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+
+{% block title %}{{ season.name }} · Bracket — Otterball{% endblock %}
+
+{% block content %}
+    <div class="page-head">
+        <h1>{{ season.name }}</h1>
+        <p>{{ season.competition.name }} · knockout rounds</p>
+        <nav class="view-tabs" aria-label="Views">
+            <a class="pill" href="{% url 'sports:season-matches' season.id %}">Fixtures</a>
+            <a class="pill" aria-current="page" href="{% url 'sports:season-bracket' season.id %}">Bracket</a>
+            {% if has_leaderboard %}
+                <a class="pill" href="{% url 'sports:season-leaderboard' season.id %}">Leaderboard</a>
+                <a class="pill" href="{% url 'sports:season-stats' season.id %}">Stats</a>
+            {% endif %}
+        </nav>
+    </div>
+
+    {% if not rounds %}
+        <div class="empty">
+            <p>This season has no knockout rounds yet.</p>
+            <p>A league season only gets a tree once its playoff rounds are ingested.</p>
+        </div>
+    {% endif %}
+{% endblock %}
+
+{% block wide %}
+    {% if rounds %}
+        {% comment %}
+            The rail names every round, whether or not its column is on screen.
+            That is what tells you the tree continues past the right edge - a
+            cut-off card only tells you something is wrong.
+        {% endcomment %}
+        <div class="wrap">
+            <nav class="round-rail" aria-label="Rounds">
+                {% for round in rounds %}
+                    <a href="#round-{{ round.stage.id }}">
+                        {{ round.stage.name }}
+                        <span class="count">{{ round.matches|length }}</span>
+                    </a>
+                {% endfor %}
+            </nav>
+        </div>
+
+        <div class="bracket">
+            {% for round in rounds %}
+                <section class="bracket-round" id="round-{{ round.stage.id }}">
+                    <h2>{{ round.stage.name }}</h2>
+                    <div class="matches">
+                        {% for match in round.matches %}
+                            {% include "sports/_match.html" with match=match show_votes=True %}
+                        {% endfor %}
+                    </div>
+                </section>
+            {% endfor %}
+            {# Right-edge fade; see .bracket-edge in site.css. #}
+            <div class="bracket-edge" aria-hidden="true"></div>
+        </div>
+
+        <div class="wrap">
+            <p class="footnote">
+                Rounds run left to right in playing order — pick one above to jump to it. Matches
+                within a round are listed by kickoff; the schedule does not record which match feeds
+                which, so no line is drawn between them. A knockout tie shown level was decided on
+                penalties.
+            </p>
+        </div>
+    {% endif %}
+{% endblock %}

@@ -17,6 +17,14 @@ FIFA_GENDER_MAP: dict[fifa.Gender | None, models.Gender] = {
     fifa.Gender.UNKNOWN: models.Gender.OTHER,
 }
 
+# Stage types where a match can end level, and therefore where "Draw" is a
+# real answer rather than an impossible one. discord_bot's
+# DISCORD_POLL_ANSWER_ORDER_MAP mirrors this when it decides whether a poll
+# gets two answers or three; the web views read it to decide whether a
+# prediction split has a Draw segment. Kept here because it is a fact about
+# the sport, not about Discord.
+DRAWABLE_STAGE_TYPES = frozenset({models.StageType.GROUP, models.StageType.LEAGUE})
+
 FIFA_STAGE_TYPE_MAP = {
     fifa.StageType.GROUP: models.StageType.GROUP,
     fifa.StageType.KNOCK_OUT: models.StageType.KNOCK_OUT,

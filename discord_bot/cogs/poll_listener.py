@@ -3,13 +3,10 @@ import logging
 import discord
 from discord.ext import commands
 
-from discord_bot.constants import (
-    DISCORD_DRAWABLE_POLL_ANSWER_ORDER,
-    DISCORD_KO_POLL_ANSWER_ORDER,
-    DISCORD_POLL_ANSWER_ORDER_MAP,
-)
+from discord_bot.constants import DISCORD_POLL_ANSWER_ORDER_MAP
 from discord_bot.models import ActiveMatchMessage, DiscordProfile
-from discord_bot.services import aget_or_create_user_id
+from discord_bot.services import aget_or_create_user_id, resolve_answer_order
+from discord_bot.utils import resolve_message_container
 from predictions.models import Prediction
 
 logger = logging.getLogger(__name__)
@@ -31,15 +28,7 @@ class PollPredictionCog(commands.Cog):
         if match_msg is None or match_msg.match is None or match_msg.match.stage is None:
             return
 
-        answer_order = DISCORD_POLL_ANSWER_ORDER_MAP.get(match_msg.match.stage.stage_type)
-        if match_msg.poll_use_fallback_answer_ordering:
-            # TODO: Fix this fallback
-            message = await self.bot.fetch_message(payload.message_id)
-            if len(message.poll.answers) == 3:
-                answer_order = DISCORD_DRAWABLE_POLL_ANSWER_ORDER
-            elif len(message.poll.answers) == 2:
-                answer_order = DISCORD_KO_POLL_ANSWER_ORDER
-
+        answer_order = await self._aresolve_answer_order(match_msg)
         if answer_order is None or len(answer_order) <= payload.answer_id:
             logger.error(f"Invalid poll answer: {payload.answer_id}")
             return
@@ -61,6 +50,34 @@ class PollPredictionCog(commands.Cog):
         # Lets MatchTickerCog drop this voter from the "still without a pick"
         # list straight away instead of at the next minute tick.
         self.bot.dispatch("prediction_change", match_msg.id)
+
+    async def _aresolve_answer_order(self, match_msg: ActiveMatchMessage):
+        """Which outcome each answer index means, for this poll.
+
+        Normally the stage type decides it and no API call is needed. Polls
+        flagged `poll_use_fallback_answer_ordering` predate that mapping and
+        have to be read off the poll itself, which needs the message - fetched
+        through its channel, since `commands.Bot` has no `fetch_message` and
+        the old call raised AttributeError on every vote on those polls, losing
+        it until the next reconciliation pass picked it up.
+        """
+        if not match_msg.poll_use_fallback_answer_ordering:
+            return DISCORD_POLL_ANSWER_ORDER_MAP.get(match_msg.match.stage.stage_type)
+
+        container = await resolve_message_container(self.bot, match_msg)
+        if container is None:
+            return None
+        try:
+            message = await container.fetch_message(match_msg.poll_message_id)
+        except (discord.NotFound, discord.Forbidden) as e:
+            logger.warning(f"Could not read poll {match_msg.poll_message_id} for its answer order: {e}")
+            return None
+        if not message.poll:
+            return None
+
+        # Same resolution the reconciliation pass uses, so a live vote and the
+        # full re-derivation cannot read the same poll differently.
+        return resolve_answer_order(match_msg, message.poll)
 
     async def _aresolve_user_id(self, discord_user_id: int) -> int | None:
         """The users.User behind a Discord id, creating one on a first vote.

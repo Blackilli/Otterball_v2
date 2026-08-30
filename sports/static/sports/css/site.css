@@ -1,0 +1,1300 @@
+/* Otterball's public pages.
+
+   One stylesheet, no framework, no build step - the site is two read-only
+   pages and a nav. Colours are defined as tokens on :root and swapped under
+   prefers-color-scheme, so both themes come from one set of rules. */
+
+:root {
+    color-scheme: light dark;
+
+    --bg: #f4f5f8;
+    --surface: #ffffff;
+    --surface-alt: #eceef4;
+    --border: #d9dce6;
+    --text: #171a21;
+    --text-muted: #626879;
+    --accent: #60669c;
+    --accent-strong: #464b7a;
+    --live: #d13b4a;
+    --vote-home: #60669c;
+    --vote-draw: #8b8f9e;
+    --vote-away: #c07d3a;
+
+    /* Categorical slots for the rank chart, validated for both modes against
+       these surfaces (lightness band, chroma floor, CVD separation,
+       normal-vision separation, contrast). Do not re-pick one by eye - the
+       slot ordering is the colourblind-safety mechanism, not decoration. The
+       light steps sit under 3:1 on white, which is why every line is also
+       labelled at its end and the chart ships a table view.
+
+       All eight are in play. That is the documented palette's full length and
+       the cap on how many lines can be told apart at once: a ninth would have
+       to be invented, and the ordering it slotted into would no longer be a
+       validated one. Selected players past the eighth take the context grey
+       and are read by their end-of-line label. */
+    --series-1: #2a78d6;
+    --series-2: #eb6834;
+    --series-3: #1baf7a;
+    --series-4: #eda100;
+    --series-5: #e87ba4;
+    --series-6: #008300;
+    --series-7: #4a3aa7;
+    --series-8: #e34948;
+    --series-context: #b3b8c6;
+    --series-field: #9aa1b2;
+    --grid: #e6e8ef;
+    --shadow: 0 1px 2px rgb(23 26 33 / 8%), 0 4px 14px rgb(23 26 33 / 6%);
+    --radius: 12px;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --bg: #14161c;
+        --surface: #1c1f27;
+        --surface-alt: #242833;
+        --border: #333846;
+        --text: #e8eaf0;
+        --text-muted: #9aa0b1;
+        --accent: #8f96d4;
+        --accent-strong: #a9afe4;
+        --live: #ff6b78;
+        --vote-home: #7b83c8;
+        --vote-draw: #6c7183;
+        --vote-away: #d59a55;
+
+        /* The same eight hues stepped for the dark surface, not an automatic
+           flip - validated as a set against #1c1f27. */
+        --series-1: #3987e5;
+        --series-2: #d95926;
+        --series-3: #199e70;
+        --series-4: #c98500;
+        --series-5: #d55181;
+        --series-6: #008300;
+        --series-7: #9085e9;
+        --series-8: #e66767;
+        --series-context: #4a5062;
+        --series-field: #6b7285;
+        --grid: #2a2f3b;
+        --shadow: 0 1px 2px rgb(0 0 0 / 30%), 0 4px 14px rgb(0 0 0 / 25%);
+    }
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-size: 16px;
+    line-height: 1.5;
+    -webkit-text-size-adjust: 100%;
+}
+
+a {
+    color: var(--accent-strong);
+}
+
+.wrap {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 0 20px;
+}
+
+main {
+    padding-bottom: 64px;
+}
+
+/* ---------------------------------------------------------------- header */
+
+.site-header {
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    margin-bottom: 28px;
+}
+
+.site-header .wrap {
+    padding-top: 18px;
+    padding-bottom: 18px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px 20px;
+    align-items: baseline;
+}
+
+.site-title {
+    margin: 0;
+    font-size: 1.25rem;
+    letter-spacing: -0.01em;
+}
+
+.site-title a {
+    color: inherit;
+    text-decoration: none;
+}
+
+.season-nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-left: auto;
+}
+
+.pill {
+    display: inline-block;
+    padding: 5px 12px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--surface-alt);
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    text-decoration: none;
+    white-space: nowrap;
+}
+
+.pill:hover {
+    border-color: var(--accent);
+    color: var(--text);
+}
+
+.pill[aria-current="page"] {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+}
+
+@media (prefers-color-scheme: dark) {
+    .pill[aria-current="page"] {
+        color: #14161c;
+    }
+}
+
+/* ------------------------------------------------------------- page head */
+
+.page-head {
+    margin-bottom: 24px;
+}
+
+.page-head h1 {
+    margin: 0 0 4px;
+    font-size: 1.9rem;
+    letter-spacing: -0.02em;
+}
+
+.page-head p {
+    margin: 0;
+    color: var(--text-muted);
+}
+
+.view-tabs {
+    display: flex;
+    gap: 8px;
+    margin: 16px 0 0;
+}
+
+.day-heading {
+    margin: 32px 0 12px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+}
+
+.day-heading:first-of-type {
+    margin-top: 8px;
+}
+
+.section-heading {
+    margin: 44px 0 12px;
+    font-size: 1.1rem;
+}
+
+/* -------------------------------------------------------------- matches */
+
+.match-grid {
+    display: grid;
+    gap: 14px;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+}
+
+.match {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 14px 16px;
+}
+
+.match-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    margin-bottom: 10px;
+}
+
+.match-meta .stage {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.match-meta .kickoff {
+    margin-left: auto;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+
+.badge {
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--surface-alt);
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.badge-live {
+    background: var(--live);
+    color: #fff;
+}
+
+.badge-postponed,
+.badge-cancelled {
+    border: 1px solid var(--border);
+}
+
+.team-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 5px 0;
+}
+
+.team-row + .team-row {
+    border-top: 1px solid var(--border);
+}
+
+.team-row .name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.team-row .score {
+    font-variant-numeric: tabular-nums;
+    font-size: 1.15rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    min-width: 1.4em;
+    text-align: right;
+}
+
+.team-row.winner .name {
+    font-weight: 700;
+}
+
+.team-row.winner .score {
+    color: var(--text);
+}
+
+.team-row.loser .name,
+.team-row.loser .score {
+    opacity: 0.55;
+}
+
+/* A crest where there is one, initials on the team's own colour where there
+   is not - the FIFA path fills logos in, but a freshly ingested team may sit
+   with nothing for a sync cycle, and an empty hole reads as an error. */
+.crest {
+    width: 26px;
+    height: 26px;
+    flex: 0 0 26px;
+    border-radius: 6px;
+    object-fit: contain;
+    background: var(--surface-alt);
+}
+
+.crest-fallback {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-size: 0.66rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+}
+
+/* ----------------------------------------------------------- vote splits */
+
+.votes {
+    margin-top: 12px;
+}
+
+.vote-bar {
+    display: flex;
+    height: 6px;
+    border-radius: 999px;
+    overflow: hidden;
+    background: var(--surface-alt);
+}
+
+.vote-bar span {
+    display: block;
+}
+
+.vote-home {
+    background: var(--vote-home);
+}
+
+.vote-draw {
+    background: var(--vote-draw);
+}
+
+.vote-away {
+    background: var(--vote-away);
+}
+
+.vote-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 14px;
+    margin-top: 7px;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.vote-legend li {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.vote-legend .swatch {
+    width: 8px;
+    height: 8px;
+    border-radius: 2px;
+    flex: none;
+}
+
+.vote-legend .count {
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+}
+
+/* Once a match is over the split stops being a poll and becomes an answer
+   key: the outcome that happened keeps its colour, the rest step back. Not a
+   new hue for "correct" - the segment already has an identity, and dimming
+   its neighbours says more than recolouring it would. */
+.vote-bar.has-result span {
+    opacity: 0.28;
+}
+
+.vote-bar.has-result span.is-correct {
+    opacity: 1;
+}
+
+.vote-legend li.is-correct {
+    color: var(--text);
+    font-weight: 600;
+}
+
+.vote-legend .tick {
+    /* Carries the meaning on its own for anyone who cannot separate the bar's
+       colours, so it is a real glyph with a label, not a ::before. */
+    margin-right: -2px;
+    font-size: 0.85em;
+    line-height: 1;
+}
+
+ul.vote-legend {
+    list-style: none;
+    padding: 0;
+}
+
+/* -------------------------------------------------------------- bracket */
+
+/* The tree is the one thing on the site that wants the whole viewport rather
+   than the reading column: six World Cup rounds are ~1700px, so confining it
+   to 1100px made it scroll on screens wide enough to show all of it. The
+   inline padding starts the first column level with the page heading and then
+   scrolls away, so the full width is usable once you move. */
+.bracket {
+    display: flex;
+    gap: 18px;
+    overflow-x: auto;
+    padding-block-end: 12px;
+    padding-inline: max(20px, calc((100% - 1100px) / 2));
+    scroll-behavior: smooth;
+    /* The columns are rounds, not a connected tree - see BracketView. */
+    align-items: stretch;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .bracket {
+        scroll-behavior: auto;
+    }
+}
+
+/* Pinned to the right edge of the scrollport, so a column cut off by it reads
+   as "continues" instead of "broken". It carries no content and adds no scroll
+   width (the negative margin cancels its width).
+
+   Hidden by default and only shown by the scroll-driven animation below: a
+   fade that cannot tell whether there is anything left to scroll to is worse
+   than none, since it would sit over the Final for no reason. Browsers without
+   scroll-driven animations get no fade and still have the round rail. */
+.bracket-edge {
+    position: sticky;
+    right: 0;
+    flex: 0 0 64px;
+    margin-left: -64px;
+    align-self: stretch;
+    pointer-events: none;
+    opacity: 0;
+    background: linear-gradient(to left, var(--bg), transparent);
+}
+
+@supports (animation-timeline: scroll()) {
+    .bracket-edge {
+        animation: bracket-edge-hint linear both;
+        /* Resolves to .bracket, the nearest inline-axis scroller. An
+           unscrollable container makes the timeline inactive, which leaves the
+           element at its un-animated opacity of 0 - exactly what a bracket
+           that already fits should show. */
+        animation-timeline: scroll(nearest inline);
+    }
+}
+
+@keyframes bracket-edge-hint {
+    0%,
+    88% {
+        opacity: 1;
+    }
+
+    100% {
+        opacity: 0;
+    }
+}
+
+/* Every round, on screen or not - the index that makes the horizontal scroll
+   discoverable, and a way to jump a column into view without dragging. */
+.round-rail {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 16px;
+}
+
+.round-rail a {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 5px 12px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--surface);
+    color: var(--text-muted);
+    font-size: 0.82rem;
+    text-decoration: none;
+    white-space: nowrap;
+}
+
+.round-rail a:hover {
+    border-color: var(--accent);
+    color: var(--text);
+}
+
+.round-rail .count {
+    padding: 0 6px;
+    border-radius: 999px;
+    background: var(--surface-alt);
+    font-size: 0.72rem;
+    font-variant-numeric: tabular-nums;
+}
+
+.bracket-round {
+    /* Wide enough for a two-name vote legend to sit on one line. */
+    flex: 0 0 272px;
+    display: flex;
+    flex-direction: column;
+    /* Jumped to from the round rail; without this the column lands flush
+       against the edge the fade sits on. */
+    scroll-margin-inline-start: 20px;
+}
+
+.bracket-round h2 {
+    position: sticky;
+    top: 0;
+    margin: 0 0 10px;
+    padding: 6px 0;
+    background: var(--bg);
+    font-size: 0.78rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+}
+
+.bracket-round .matches {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    /* Later rounds hold fewer matches; spreading them keeps each one roughly
+       level with the pair it came from without pretending to draw the join. */
+    justify-content: space-around;
+    flex: 1;
+}
+
+/* ---------------------------------------------------------- leaderboard */
+
+.board + .board {
+    margin-top: 44px;
+}
+
+.board-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 14px;
+}
+
+.board-head h2 {
+    margin: 0;
+    font-size: 1.1rem;
+}
+
+/* The rules sit beside the table on a wide screen and beneath it on a narrow
+   one - they explain the Points column, so they follow it either way. */
+.board-body {
+    display: grid;
+    gap: 18px;
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+}
+
+@media (min-width: 800px) {
+    .board-body {
+        grid-template-columns: minmax(0, 1fr) 220px;
+    }
+}
+
+.table-scroll {
+    overflow-x: auto;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+}
+
+.standings {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.92rem;
+}
+
+.standings th,
+.standings td {
+    padding: 9px 14px;
+    text-align: left;
+    font-weight: 400;
+    white-space: nowrap;
+}
+
+.standings thead th {
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border);
+}
+
+.standings tbody tr + tr th,
+.standings tbody tr + tr td {
+    border-top: 1px solid var(--border);
+}
+
+.standings .num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+.standings .col-rank {
+    width: 1%;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+}
+
+.standings .player {
+    width: 99%;
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+
+.standings .points {
+    font-weight: 600;
+}
+
+.standings .rate {
+    color: var(--text-muted);
+}
+
+/* Only the leader is marked. Podium colours would need three more tokens to
+   say something the rank column already says. */
+.standings tr.leader .col-rank,
+.standings tr.leader .player,
+.standings tr.leader .points {
+    color: var(--accent-strong);
+    font-weight: 700;
+}
+
+.rules {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 14px 16px;
+}
+
+.rules h3 {
+    margin: 0 0 10px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--text-muted);
+}
+
+.rules dl {
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+}
+
+.rules dl > div {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    font-size: 0.87rem;
+}
+
+.rules dt {
+    flex: 1;
+    min-width: 0;
+}
+
+.rules dd {
+    margin: 0;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+}
+
+/* ------------------------------------------------------------------ kpi */
+
+.kpi-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 12px;
+    margin: 0 0 28px;
+    padding: 0;
+    list-style: none;
+}
+
+.kpi-row li {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.kpi-value {
+    font-size: 1.7rem;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.1;
+}
+
+.kpi-label {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+}
+
+/* ---------------------------------------------------------------- chart */
+
+.chart {
+    margin: 0 0 28px;
+}
+
+.chart figcaption {
+    margin-bottom: 10px;
+    font-size: 0.84rem;
+    color: var(--text-muted);
+}
+
+.chart-frame {
+    position: relative;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 12px;
+}
+
+.rank-chart {
+    display: block;
+    width: 100%;
+    height: auto;
+}
+
+/* Recessive by design: the guides exist to be measured against, not read. */
+.rank-chart .grid line {
+    stroke: var(--grid);
+    stroke-width: 1;
+}
+
+.rank-chart .axis-label {
+    fill: var(--text-muted);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+}
+
+.rank-chart .axis-label.y {
+    text-anchor: end;
+    dominant-baseline: middle;
+}
+
+.rank-chart .axis-label.x {
+    text-anchor: middle;
+}
+
+.rank-chart .line {
+    fill: none;
+    stroke-width: 2;
+    stroke-linejoin: round;
+    stroke-linecap: round;
+}
+
+/* Two levels of recessive. The unnamed rest of the top ten are still
+   individuals worth following; the field behind them is a density band whose
+   job is to show where everyone else was - above all, that something is
+   always on rank 1. */
+.rank-chart .line.series-context {
+    stroke-width: 1.25;
+    opacity: 0.55;
+}
+
+.rank-chart .line.series-field {
+    stroke-width: 1;
+    opacity: 0.18;
+}
+
+.rank-chart text.line-label.series-context {
+    font-weight: 400;
+}
+
+.rank-chart .line-label {
+    font-size: 11px;
+    font-weight: 600;
+    dominant-baseline: middle;
+}
+
+/* The UA stylesheet's `[hidden] { display: none }` is an HTML-namespace rule,
+   so an SVG node keeps rendering with the attribute set - the same trap as the
+   crosshair below. Deselected players' labels need this to actually go away. */
+.rank-chart .line-label[hidden] {
+    display: none;
+}
+
+/* Stroke and fill are set on different elements on purpose. A `fill` on the
+   shared series class beats `.line { fill: none }` on specificity and turns
+   every line into a filled blob - so lines take stroke, and only the label and
+   the hover dot take fill. */
+.rank-chart polyline.series-1 { stroke: var(--series-1); }
+.rank-chart polyline.series-2 { stroke: var(--series-2); }
+.rank-chart polyline.series-3 { stroke: var(--series-3); }
+.rank-chart polyline.series-4 { stroke: var(--series-4); }
+.rank-chart polyline.series-5 { stroke: var(--series-5); }
+.rank-chart polyline.series-6 { stroke: var(--series-6); }
+.rank-chart polyline.series-7 { stroke: var(--series-7); }
+.rank-chart polyline.series-8 { stroke: var(--series-8); }
+.rank-chart polyline.series-context { stroke: var(--series-context); }
+.rank-chart polyline.series-field { stroke: var(--series-field); }
+
+.rank-chart text.series-1,
+.rank-chart circle.series-1 { fill: var(--series-1); }
+
+.rank-chart text.series-2,
+.rank-chart circle.series-2 { fill: var(--series-2); }
+
+.rank-chart text.series-3,
+.rank-chart circle.series-3 { fill: var(--series-3); }
+
+.rank-chart text.series-4,
+.rank-chart circle.series-4 { fill: var(--series-4); }
+
+.rank-chart text.series-5,
+.rank-chart circle.series-5 { fill: var(--series-5); }
+
+.rank-chart text.series-6,
+.rank-chart circle.series-6 { fill: var(--series-6); }
+
+.rank-chart text.series-7,
+.rank-chart circle.series-7 { fill: var(--series-7); }
+
+.rank-chart text.series-8,
+.rank-chart circle.series-8 { fill: var(--series-8); }
+
+.rank-chart text.series-context { fill: var(--text-muted); }
+.rank-chart circle.series-context { fill: var(--series-context); }
+
+.rank-chart .hover-target {
+    fill: transparent;
+}
+
+/* `hidden` is an HTML attribute and does nothing to an SVG group. */
+.rank-chart .crosshair[hidden] {
+    display: none;
+}
+
+.rank-chart .crosshair line {
+    stroke: var(--text-muted);
+    stroke-width: 1;
+    stroke-dasharray: 3 3;
+}
+
+/* A ring in the surface colour, so a dot landing on another line still reads
+   as a separate mark. */
+.rank-chart .hover-dot {
+    stroke: var(--surface);
+    stroke-width: 2;
+}
+
+.chart-tooltip {
+    position: absolute;
+    top: 16px;
+    z-index: 2;
+    pointer-events: none;
+    min-width: 190px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface);
+    box-shadow: var(--shadow);
+    font-size: 0.8rem;
+}
+
+.chart-tooltip[hidden] {
+    display: none;
+}
+
+.chart-tooltip .tooltip-head {
+    margin: 0;
+    font-weight: 600;
+}
+
+.chart-tooltip .tooltip-sub {
+    margin: 0 0 8px;
+    color: var(--text-muted);
+    font-size: 0.74rem;
+}
+
+.chart-tooltip ul {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.chart-tooltip li {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* The leader at this match when they are not one of the named ten - set apart
+   so it reads as an answer to "who was first", not as an eleventh series. */
+.chart-tooltip li.tooltip-leader {
+    padding-bottom: 5px;
+    margin-bottom: 3px;
+    border-bottom: 1px solid var(--border);
+}
+
+.chart-tooltip li.tooltip-leader .tooltip-name {
+    color: var(--text);
+    font-weight: 600;
+}
+
+.chart-tooltip .tooltip-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.chart-tooltip .tooltip-rank {
+    font-variant-numeric: tabular-nums;
+    color: var(--text-muted);
+}
+
+.chart-tooltip .tooltip-points {
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    min-width: 2.2em;
+    text-align: right;
+}
+
+/* Script-only, so it ships with `hidden` and the module reveals it - see
+   _rank_chart.html. Deselecting is how a reader follows one rivalry out of
+   forty lines, so the list has to stay usable at forty entries: it columns and
+   scrolls rather than pushing the chart off the screen. */
+.chart-picker {
+    margin: 14px 0 0;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    padding: 10px 12px;
+}
+
+.chart-picker[hidden] {
+    display: none;
+}
+
+.picker-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.picker-title {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text-muted);
+}
+
+.picker-actions {
+    display: flex;
+    gap: 6px;
+}
+
+.picker-button {
+    font: inherit;
+    font-size: 0.76rem;
+    color: var(--text);
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 3px 12px;
+    cursor: pointer;
+}
+
+.picker-button:hover {
+    border-color: var(--text-muted);
+}
+
+.picker-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+    gap: 2px 12px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    max-height: 220px;
+    overflow-y: auto;
+}
+
+.picker-list label {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 3px 4px;
+    border-radius: 4px;
+    font-size: 0.82rem;
+    cursor: pointer;
+}
+
+.picker-list label:hover {
+    background: var(--grid);
+}
+
+.picker-list .swatch {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 2px;
+    flex: none;
+}
+
+.picker-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.picker-rank {
+    margin-left: auto;
+    font-size: 0.74rem;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-muted);
+}
+
+.chart-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 16px;
+    margin: 12px 0 0;
+    padding: 0;
+    list-style: none;
+    font-size: 0.78rem;
+    color: var(--text-muted);
+}
+
+.chart-legend li {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+}
+
+.chart-legend .swatch,
+.chart-tooltip .swatch,
+.standings .player .swatch {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 2px;
+    flex: none;
+}
+
+.standings .player .swatch {
+    margin-right: 8px;
+}
+
+.swatch.series-1 {
+    background: var(--series-1);
+}
+
+.swatch.series-2 {
+    background: var(--series-2);
+}
+
+.swatch.series-3 {
+    background: var(--series-3);
+}
+
+.swatch.series-4 {
+    background: var(--series-4);
+}
+
+.swatch.series-5 {
+    background: var(--series-5);
+}
+
+.swatch.series-6 {
+    background: var(--series-6);
+}
+
+.swatch.series-7 {
+    background: var(--series-7);
+}
+
+.swatch.series-8 {
+    background: var(--series-8);
+}
+
+.swatch.series-context {
+    background: var(--series-context);
+}
+
+.swatch.series-field {
+    background: var(--series-field);
+}
+
+.chart-table {
+    margin-bottom: 28px;
+}
+
+.chart-table summary {
+    cursor: pointer;
+    font-size: 0.84rem;
+    color: var(--text-muted);
+    margin-bottom: 10px;
+}
+
+.chart-table summary:hover {
+    color: var(--text);
+}
+
+.section-note {
+    margin: 0 0 12px;
+    font-size: 0.84rem;
+    color: var(--text-muted);
+}
+
+/* --------------------------------------------------------------- callout */
+
+/* One sentence the reader should not be able to miss - the pool's own
+   consensus, scored as a player. */
+.callout {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 16px 18px;
+    margin-bottom: 28px;
+}
+
+.callout-lead {
+    margin: 0;
+    font-size: 1.02rem;
+    line-height: 1.5;
+}
+
+.callout-note {
+    margin: 6px 0 0;
+    font-size: 0.84rem;
+    color: var(--text-muted);
+}
+
+/* Two small tables that belong beside each other on a wide screen. */
+.stat-pair {
+    display: grid;
+    gap: 28px;
+    grid-template-columns: minmax(0, 1fr);
+    margin-bottom: 8px;
+}
+
+@media (min-width: 760px) {
+    .stat-pair {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+.stat-pair .section-heading {
+    margin-top: 0;
+}
+
+/* ------------------------------------------------------------- pick mix */
+
+.mix {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 12px;
+    margin: 0 0 28px;
+    padding: 0;
+    list-style: none;
+}
+
+.mix li {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 14px 16px;
+}
+
+.mix-name {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0 0 10px;
+    font-weight: 600;
+    font-size: 0.92rem;
+}
+
+.mix-bias {
+    margin-left: auto;
+    font-size: 0.72rem;
+    font-weight: 400;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+.mix-pair {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.mix-pair + .mix-pair {
+    margin-top: 5px;
+}
+
+.mix-key {
+    width: 4.6em;
+    flex: none;
+}
+
+.mix-bar {
+    flex: 1;
+    min-width: 0;
+    height: 6px;
+    border-radius: 999px;
+    background: var(--surface-alt);
+    overflow: hidden;
+}
+
+.mix-bar > span {
+    display: block;
+    height: 100%;
+}
+
+/* What actually happened, in the same hue but stepped back - the pair reads as
+   one measure at two moments, not as two categories. */
+.mix-bar > span.dim {
+    opacity: 0.45;
+}
+
+.mix-value {
+    flex: none;
+    width: 2.6em;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    color: var(--text);
+}
+
+/* ---------------------------------------------------------------- empty */
+
+.empty {
+    background: var(--surface);
+    border: 1px dashed var(--border);
+    border-radius: var(--radius);
+    padding: 28px 24px;
+    text-align: center;
+    color: var(--text-muted);
+}
+
+.empty p {
+    margin: 0 0 6px;
+}
+
+.empty p:last-child {
+    margin-bottom: 0;
+}
+
+.footnote {
+    margin-top: 32px;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}

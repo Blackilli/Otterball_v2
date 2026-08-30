@@ -11,7 +11,7 @@ The system utilizes native Discord polls for prediction submissions, manages aut
 - **True Sports Leaderboard (Standard Competition Ranking):** Computes rankings mathematically. If two players share 1st place, 2nd place is skipped, and the next player lands directly on 3rd place. The formatting prevents breaking Discord's character limits via dynamic *Pleb-Splitting*.
 - **Real-Time Reconciliation:** Asynchronous workers synchronize submitted poll votes directly with the PostgreSQL database immediately after a poll closes, ensuring a tamper-proof pipeline.
 - **Garbage Removal System:** Automatically cleans up ticker channels and threads by removing annoying, Discord-generated system messages (*"The poll results are in!"*) both in real-time and via a historical boot sweep.
-- **Backup & Restore:** `export_db` / `import_db` management commands dump the full database to a single compressed, natural-key JSON fixture and restore it cleanly, skipping derived/ephemeral tables (contenttypes, sessions, admin logs, Celery task results).
+- **Backup & Restore:** `export_db` / `import_db` management commands bundle the full database *and* the media files into one compressed archive and restore it cleanly, skipping derived/ephemeral tables (contenttypes, sessions, admin logs, Celery task results). The database half uses natural keys, so it restores into an empty database on another server without renumbering anything that matters.
 - **Modern Deployment:** Ultra-fast multi-stage Docker builds leveraging the modern `uv` package manager and BuildKit caching.
 
 ## 🛠️ Tech Stack
@@ -195,8 +195,9 @@ Pre-commit hooks (pyupgrade, django-upgrade, black, isort, `uv lock`/`uv sync`, 
 ### Database Backup & Restore
 
 ```bash
-uv run python manage.py export_db                           # dump to backups/otterball_<timestamp>.json.gz
-uv run python manage.py import_db backups/otterball_xxx.json.gz --flush   # restore, wiping existing rows first
+uv run python manage.py export_db                           # bundle DB + media to backups/otterball_<timestamp>.tar.gz
+uv run python manage.py export_db dump.json.gz --no-media   # database only, as a plain fixture
+uv run python manage.py import_db backups/otterball_xxx.tar.gz --flush   # restore, wiping existing rows first
 ```
 
 ---

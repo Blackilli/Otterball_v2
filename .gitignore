@@ -32,6 +32,10 @@ backups/
 
 media/
 static/
+# STATIC_ROOT is BASE_DIR/static (collectstatic output), so `static/` has to
+# stay ignored - but the pattern matches at any depth, and an app's own
+# static/ directory is source, not build output.
+!*/static/
 staticfiles/
 
 .idea/

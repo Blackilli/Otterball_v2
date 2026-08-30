@@ -16,6 +16,28 @@ from sports.models import Match, MatchOutcome
 logger = logging.getLogger(__name__)
 
 
+def matches_needing_polls(*, pool_id: int, season_id: int, start, end):
+    """Matches in the window that this pool has not already posted a poll for.
+
+    The exclusion is on ActiveMatchMessage alone. It used to also require a
+    Prediction (`exclude(predictions__pool_id=..., active_messages__pool_id=...)`),
+    and because both conditions had to hold to exclude a match, one that had a
+    poll but no votes yet was not excluded - so the next batch posted a second
+    poll for it. Whether anyone has voted says nothing about whether a poll
+    exists; the ActiveMatchMessage row is the record of that.
+    """
+    return (
+        Match.objects.filter(
+            kickoff__gte=start,
+            kickoff__lte=end,
+            stage__season_id=season_id,
+        )
+        .exclude(active_messages__pool_id=pool_id)
+        .select_related("home_team", "away_team", "stage")
+        .order_by("kickoff")
+    )
+
+
 class DayOfWeek(IntEnum):
     MONDAY = 0
     TUESDAY = 1
@@ -128,15 +150,12 @@ class PollCreationCog(commands.Cog):
 
             upcoming_matches = [
                 match
-                async for match in Match.objects.filter(
-                    kickoff__gte=local_now,
-                    kickoff__lte=lookahead_limit,
-                    stage__season_id=guild_pool.pool.season_id,
-                )
-                .select_related("home_team", "away_team", "stage")
-                .exclude(predictions__pool_id=guild_pool.pool_id, active_messages__pool_id=guild_pool.pool_id)
-                .order_by("kickoff")
-                .aiterator()
+                async for match in matches_needing_polls(
+                    pool_id=guild_pool.pool_id,
+                    season_id=guild_pool.pool.season_id,
+                    start=local_now,
+                    end=lookahead_limit,
+                ).aiterator()
             ]
 
             if not upcoming_matches:

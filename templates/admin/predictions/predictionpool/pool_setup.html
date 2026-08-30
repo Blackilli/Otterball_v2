@@ -1,0 +1,159 @@
+{% extends "admin/base_site.html" %}
+
+{% block extrahead %}
+    {{ block.super }}
+    {% if form %}{{ form.media }}{% endif %}
+{% endblock %}
+
+{% block extrastyle %}
+    {{ block.super }}
+    <style>
+        .setup-step { margin-bottom: 26px; }
+        .setup-step > h2 {
+            font-size: 0.82rem;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            margin: 0 0 8px;
+        }
+        .setup-step > p.help { margin: 0 0 10px; }
+
+        .check-list { list-style: none; margin: 0; padding: 0; }
+        .check-list li {
+            display: flex;
+            gap: 10px;
+            align-items: baseline;
+            padding: 5px 0;
+            border-top: 1px solid var(--hairline-color, #e8e8e8);
+        }
+        .check-list li:first-child { border-top: 0; }
+        .check-status {
+            flex: none;
+            width: 3.4em;
+            font-weight: 700;
+            font-size: 0.74rem;
+            letter-spacing: 0.04em;
+        }
+        .check-OK { color: #2c8a4b; }
+        .check-WARN { color: #996f00; }
+        .check-FAIL { color: #ba2121; }
+        .check-detail { color: var(--body-quiet-color, #666); }
+
+        .setup-done {
+            border-left: 4px solid var(--object-tools-bg, #417690);
+            padding: 14px 18px;
+            background: var(--darkened-bg, #f8f8f8);
+            margin-bottom: 26px;
+        }
+        .setup-done h2 { margin-top: 0; }
+        .next-steps { margin: 12px 0 0; padding-left: 20px; }
+        .next-steps li { margin-bottom: 4px; }
+    </style>
+{% endblock %}
+
+{% block breadcrumbs %}
+    <div class="breadcrumbs">
+        <a href="{% url 'admin:index' %}">Home</a>
+        &rsaquo; <a href="{% url 'admin:app_list' app_label=opts.app_label %}">{{ opts.app_config.verbose_name }}</a>
+        &rsaquo; <a href="{% url 'admin:predictions_predictionpool_changelist' %}">{{ opts.verbose_name_plural|capfirst }}</a>
+        &rsaquo; Start a new pool
+    </div>
+{% endblock %}
+
+{% block content %}
+    <div id="content-main">
+
+        {% if created_pool %}
+            {% comment %}
+                Also the landing page for the readiness column on the changelist,
+                so the wording has to hold for a pool that was set up weeks ago,
+                not just one created a second ago.
+            {% endcomment %}
+            <div class="setup-done">
+                <h2>{{ created_pool.name }}</h2>
+                <p>
+                    Pool #{{ created_pool.pk }} on {{ created_pool.season.name }} —
+                    {% if report.is_ready %}ready to run.{% else %}not ready yet, see below.{% endif %}
+                </p>
+                <ol class="next-steps">
+                    <li>
+                        <a href="{{ pool_change_url }}"><strong>Set the points per round</strong></a> — every
+                        round starts on the same default, so scoring is flat until you change it.
+                    </li>
+                    <li>The bot picks the schedule up within a minute; no restart needed.</li>
+                </ol>
+            </div>
+
+            <div class="module setup-step">
+                <h2>Readiness</h2>
+                <p class="help">
+                    The same checks <code>manage.py check_pool</code> runs. Everything they catch fails
+                    silently otherwise.
+                </p>
+                <ul class="check-list">
+                    {% for check in report.checks %}
+                        <li>
+                            <span class="check-status check-{{ check.status }}">{{ check.status }}</span>
+                            <span>
+                                {{ check.label }}
+                                {% if check.detail %}<span class="check-detail">— {{ check.detail }}</span>{% endif %}
+                            </span>
+                        </li>
+                    {% endfor %}
+                </ul>
+            </div>
+
+            <p>
+                <a class="button" href="{% url 'admin:predictions_predictionpool_setup' %}">Start another pool</a>
+                <a class="button default" href="{{ pool_change_url }}">Set points per round</a>
+            </p>
+
+        {% else %}
+
+            <div class="module setup-step">
+                <h2>Before you start</h2>
+                <p class="help">
+                    A pool needs ingested sport data to attach to, and a Discord guild to post in. The guild,
+                    channel and role rows are created by the bot on startup — until it has connected once, the
+                    pickers below are empty.
+                </p>
+                <ul class="check-list">
+                    {% for check in environment %}
+                        <li>
+                            <span class="check-status check-{{ check.status }}">{{ check.status }}</span>
+                            <span>
+                                {{ check.label }}
+                                {% if check.detail %}<span class="check-detail">— {{ check.detail }}</span>{% endif %}
+                            </span>
+                        </li>
+                    {% endfor %}
+                </ul>
+            </div>
+
+            <form method="post">
+                {% csrf_token %}
+
+                {% if form.non_field_errors %}
+                    <p class="errornote">{{ form.non_field_errors }}</p>
+                {% endif %}
+
+                {% for group in form.groups %}
+                    <fieldset class="module aligned setup-step">
+                        <h2>{{ group.heading }}</h2>
+                        {% if group.note %}<p class="help">{{ group.note }}</p>{% endif %}
+                        {% for field in group.fields %}
+                            <div class="form-row{% if field.errors %} errors{% endif %}">
+                                {{ field.errors }}
+                                {{ field.label_tag }} {{ field }}
+                                {% if field.help_text %}<div class="help">{{ field.help_text }}</div>{% endif %}
+                            </div>
+                        {% endfor %}
+                    </fieldset>
+                {% endfor %}
+
+                <div class="submit-row">
+                    <input type="submit" value="Create pool" class="default">
+                </div>
+            </form>
+        {% endif %}
+    </div>
+{% endblock %}

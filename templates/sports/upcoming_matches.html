@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+
+{% block title %}{% if season %}{{ season.name }} · {% endif %}Upcoming matches — Otterball{% endblock %}
+
+{% block content %}
+    {% if not season %}
+        <div class="empty">
+            <p>No matches have been ingested yet.</p>
+            <p>Run one of the <code>sync_*_infra</code> commands and this page fills itself in.</p>
+        </div>
+    {% else %}
+        <div class="page-head">
+            <h1>{{ season.name }}</h1>
+            <p>
+                {{ season.competition.name }}
+                {% if live_count %}· <strong>{{ live_count }}</strong> live right now{% endif %}
+            </p>
+            <nav class="view-tabs" aria-label="Views">
+                <a class="pill" aria-current="page" href="{% url 'sports:season-matches' season.id %}">Fixtures</a>
+                {% if has_bracket %}
+                    <a class="pill" href="{% url 'sports:season-bracket' season.id %}">Bracket</a>
+                {% endif %}
+                {% if has_leaderboard %}
+                    <a class="pill" href="{% url 'sports:season-leaderboard' season.id %}">Leaderboard</a>
+                    <a class="pill" href="{% url 'sports:season-stats' season.id %}">Stats</a>
+                {% endif %}
+            </nav>
+        </div>
+
+        {% for day in match_days %}
+            <h2 class="day-heading">{{ day.date|date:"l, j F Y" }}</h2>
+            <div class="match-grid">
+                {% for match in day.matches %}
+                    {% include "sports/_match.html" with match=match show_votes=True %}
+                {% endfor %}
+            </div>
+        {% empty %}
+            <div class="empty">
+                <p>Nothing scheduled.</p>
+                <p>Either this season is over, or its fixtures have not been ingested yet.</p>
+            </div>
+        {% endfor %}
+
+        {% if recent_results %}
+            <h2 class="section-heading">Latest results</h2>
+            <div class="match-grid">
+                {% for match in recent_results %}
+                    {% include "sports/_match.html" with match=match show_votes=True %}
+                {% endfor %}
+            </div>
+        {% endif %}
+    {% endif %}
+{% endblock %}
