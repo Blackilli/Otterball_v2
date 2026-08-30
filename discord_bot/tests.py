@@ -1,8 +1,10 @@
 import datetime
+from io import StringIO
 
 import discord
 from asgiref.sync import async_to_sync, sync_to_async
 from django.contrib.auth import get_user_model
+from django.core.management import CommandError, call_command
 from django.db import connection
 from django.test import TestCase
 from django.test.utils import CaptureQueriesContext
@@ -31,6 +33,11 @@ from discord_bot.models import (
     PoolNotificationPreference,
 )
 from discord_bot.services import aget_or_create_profile, aset_missing_vote_reminders
+from discord_bot.utils import (
+    forget_unreachable_containers,
+    is_container_unreachable,
+    resolve_message_container,
+)
 from predictions.models import (
     DEFAULT_REMINDER_LEAD_MINUTES,
     PoolConfiguration,
@@ -673,6 +680,8 @@ class RecordingChannel(discord.abc.Messageable):
 
 
 class _FakeResponse:
+    """Enough of an aiohttp response for discord.NotFound/Forbidden to be constructible."""
+
     status = 404
     reason = "Not Found"
 
@@ -907,7 +916,7 @@ class GarbageSweepQueryTests(TestCase):
                 return None
 
             async def fetch_channel(self, channel_id):
-                raise discord.NotFound(FakeResponse(404), "unknown channel")
+                raise discord.NotFound(_FakeResponse(), "unknown channel")
 
         bot = RecordingBot()
         cog = RemoveGarbageCog(bot=bot)
@@ -1861,15 +1870,8 @@ class FakeOnboardingChannel(discord.abc.Messageable):
 
     async def fetch_message(self, message_id):
         if message_id not in self.messages:
-            raise discord.NotFound(FakeResponse(), "unknown message")
+            raise discord.NotFound(_FakeResponse(), "unknown message")
         return self.messages[message_id]
-
-
-class FakeResponse:
-    """Enough of an aiohttp response for discord.NotFound to be constructible."""
-
-    status = 404
-    reason = "Not Found"
 
 
 class PoolOnboardingTests(TestCase):
@@ -2026,3 +2028,226 @@ class PoolOnboardingTests(TestCase):
         await cog.update_leaderboard_msg(guild_pool)
 
         self.assertEqual(self.discord_channel.sends, [])
+
+
+class UnreachableContainerTests(TestCase):
+    """A channel Discord refuses is written off for a while.
+
+    A restored season whose threads are gone otherwise costs one fetch and one
+    warning per match on every pass - the reconciliation sweep alone walks every
+    poll that was never finalized, which for a World Cup pool is ~100 rows.
+    """
+
+    def setUp(self):
+        forget_unreachable_containers()
+        self.addCleanup(forget_unreachable_containers)
+
+        self.competition = Competition.objects.create(name="World Cup")
+        self.season = Season.objects.create(name="WC 2026", competition=self.competition, year=2026)
+        self.stage = Stage.objects.create(season=self.season, name="Group A", stage_type=StageType.GROUP)
+        self.pool = PredictionPool.objects.create(name="WC Pool", season=self.season)
+        self.guild = DiscordGuild.objects.create(id=1, name="Test Guild")
+        self.channel = DiscordChannel.objects.create(id=10, guild=self.guild, name="general", channel_type="text")
+
+    def make_row(self, *, match_offset=0, status=MatchStatus.SCHEDULED, thread_id=None):
+        match = Match.objects.create(
+            stage=self.stage,
+            home_team=Team.objects.create(name=f"Home {match_offset}"),
+            away_team=Team.objects.create(name=f"Away {match_offset}"),
+            kickoff=timezone.now() + datetime.timedelta(hours=1 + match_offset),
+            status=status,
+        )
+        return ActiveMatchMessage.objects.create(
+            match=match,
+            guild=self.guild,
+            pool=self.pool,
+            channel=self.channel,
+            thread_id=thread_id,
+            poll_message_id=1000 + match_offset,
+        )
+
+    class ForbiddenBot(FakeBot):
+        """Answers every fetch with the 403 the live bot was drowning in."""
+
+        def __init__(self):
+            super().__init__(channel=None)
+            self.fetches = 0
+
+        def get_channel(self, channel_id):
+            return None
+
+        async def fetch_channel(self, channel_id):
+            self.fetches += 1
+            raise discord.Forbidden(_FakeResponse(), "Missing Access")
+
+    async def test_a_refused_container_is_fetched_once_not_once_per_row(self):
+        bot = self.ForbiddenBot()
+        rows = [await sync_to_async(self.make_row)(match_offset=i, thread_id=555) for i in range(3)]
+
+        for row in rows:
+            self.assertIsNone(await resolve_message_container(bot, row))
+
+        self.assertEqual(bot.fetches, 1)
+        self.assertTrue(is_container_unreachable(555))
+
+    async def test_a_different_container_is_still_tried(self):
+        bot = self.ForbiddenBot()
+        first = await sync_to_async(self.make_row)(match_offset=0, thread_id=555)
+        second = await sync_to_async(self.make_row)(match_offset=1, thread_id=666)
+
+        await resolve_message_container(bot, first)
+        await resolve_message_container(bot, second)
+
+        self.assertEqual(bot.fetches, 2)
+
+    async def test_forgetting_lets_a_fixed_permission_take_effect(self):
+        bot = self.ForbiddenBot()
+        row = await sync_to_async(self.make_row)(thread_id=555)
+
+        await resolve_message_container(bot, row)
+        forget_unreachable_containers()
+        await resolve_message_container(bot, row)
+
+        self.assertEqual(bot.fetches, 2)
+
+    async def test_a_finished_match_with_a_dead_container_is_retired(self):
+        bot = self.ForbiddenBot()
+        row = await sync_to_async(self.make_row)(status=MatchStatus.FINISHED, thread_id=555)
+        cog = MatchTickerCog(bot=bot)
+
+        await cog.sync_state_message(row)
+
+        stored = await ActiveMatchMessage.objects.aget(id=row.id)
+        self.assertTrue(stored.is_poll_finalized)
+        self.assertTrue(stored.is_ticker_finalized)
+
+    async def test_a_live_match_with_a_dead_container_keeps_its_row(self):
+        """A 403 on a match still to be played may be a permission about to be
+        granted; retiring the row would silently drop the poll."""
+        bot = self.ForbiddenBot()
+        row = await sync_to_async(self.make_row)(status=MatchStatus.SCHEDULED, thread_id=555)
+        cog = MatchTickerCog(bot=bot)
+
+        await cog.sync_state_message(row)
+
+        stored = await ActiveMatchMessage.objects.aget(id=row.id)
+        self.assertFalse(stored.is_poll_finalized)
+        self.assertFalse(stored.is_ticker_finalized)
+
+
+class ReconciliationSweepGuardTests(TestCase):
+    """on_ready fires on every gateway reconnect, not just startup.
+
+    The poll sweep is one Discord fetch per unfinalized row, so replaying it on
+    a blip re-ran the whole season.
+    """
+
+    async def test_the_poll_sweep_runs_once_per_process(self):
+        cog = ReconciliationCog(bot=FakeBot())
+        calls = []
+
+        async def record():
+            calls.append(1)
+
+        cog.reconcile_roles = record
+        cog.reconcile_channels = record
+        cog.reconcile_active_polls = record
+
+        await cog.on_ready()
+        first = len(calls)
+        await cog.on_ready()
+
+        # Roles and channels are cheap cache reads and run again; the sweep does not.
+        self.assertEqual(first, 3)
+        self.assertEqual(len(calls), 5)
+
+
+class RetireMatchMessagesCommandTests(TestCase):
+    """Bulk retirement for rows the bot can never reach again.
+
+    MatchTickerCog retires a finished match whose channel is refused, but only
+    rows the ticker still walks. A season restored into a new guild leaves rows
+    pointing at channels that will never resolve, and this is the operator's way
+    of saying so - it cannot ask Discord, there is no bot in a management
+    command, which is why a filter is mandatory.
+    """
+
+    def setUp(self):
+        self.competition = Competition.objects.create(name="World Cup")
+        self.season = Season.objects.create(name="WC 2026", competition=self.competition, year=2026)
+        self.other_season = Season.objects.create(name="WC 2030", competition=self.competition, year=2030)
+        self.guild = DiscordGuild.objects.create(id=1, name="Test Guild")
+        self.channel = DiscordChannel.objects.create(id=10, guild=self.guild, name="general", channel_type="text")
+
+    def make_row(self, season, *, offset=0, thread_id=None):
+        stage = Stage.objects.create(season=season, name=f"Group {offset}", stage_type=StageType.GROUP)
+        pool, _ = PredictionPool.objects.get_or_create(name=f"Pool {season.year}", season=season)
+        match = Match.objects.create(
+            stage=stage,
+            home_team=Team.objects.create(name=f"Home {season.year}{offset}"),
+            away_team=Team.objects.create(name=f"Away {season.year}{offset}"),
+            kickoff=timezone.now() - datetime.timedelta(days=offset + 1),
+            status=MatchStatus.FINISHED,
+        )
+        return ActiveMatchMessage.objects.create(
+            match=match,
+            guild=self.guild,
+            pool=pool,
+            channel=self.channel,
+            thread_id=thread_id,
+            poll_message_id=season.year * 100 + offset,
+        )
+
+    def run_command(self, *args):
+        out = StringIO()
+        call_command("retire_match_messages", *args, stdout=out)
+        return out.getvalue()
+
+    def test_it_refuses_to_run_without_a_filter(self):
+        self.make_row(self.season)
+
+        with self.assertRaises(CommandError):
+            self.run_command()
+
+    def test_a_season_is_retired_and_the_others_are_left_alone(self):
+        doomed = self.make_row(self.season)
+        keeper = self.make_row(self.other_season)
+
+        output = self.run_command("--season", str(self.season.id))
+
+        doomed.refresh_from_db()
+        keeper.refresh_from_db()
+        self.assertTrue(doomed.is_poll_finalized)
+        self.assertTrue(doomed.is_ticker_finalized)
+        self.assertFalse(keeper.is_poll_finalized)
+        self.assertIn("Retired 1", output)
+
+    def test_dry_run_changes_nothing(self):
+        row = self.make_row(self.season)
+
+        output = self.run_command("--season", str(self.season.id), "--dry-run")
+
+        row.refresh_from_db()
+        self.assertFalse(row.is_poll_finalized)
+        self.assertIn("Would retire 1", output)
+
+    def test_a_thread_id_is_matched_as_a_container(self):
+        """container_id is `thread_id or channel_id`, so --channel has to find
+        both shapes - the rows this exists for are the threaded era's."""
+        threaded = self.make_row(self.season, offset=0, thread_id=555)
+        in_channel = self.make_row(self.season, offset=1)
+
+        self.run_command("--channel", "555")
+
+        threaded.refresh_from_db()
+        in_channel.refresh_from_db()
+        self.assertTrue(threaded.is_poll_finalized)
+        self.assertFalse(in_channel.is_poll_finalized)
+
+    def test_already_finalized_rows_are_not_reported(self):
+        self.make_row(self.season)
+        ActiveMatchMessage.objects.update(is_poll_finalized=True, is_ticker_finalized=True)
+
+        output = self.run_command("--season", str(self.season.id))
+
+        self.assertIn("Nothing to retire", output)

@@ -22,7 +22,7 @@ from discord_bot.models import (
     PoolNotificationPreference,
 )
 from discord_bot.services import sync_predictions_from_poll
-from discord_bot.utils import resolve_message_container
+from discord_bot.utils import is_container_unreachable, resolve_message_container
 from predictions.models import DEFAULT_REMINDER_LEAD_MINUTES, PoolConfiguration, Prediction
 from sports.models import Match, MatchStatus, Team
 from sports.schemas import MatchUpdatePayload
@@ -259,6 +259,7 @@ class MatchTickerCog(commands.Cog):
     async def _sync_state_message(self, active_msg: ActiveMatchMessage) -> None:
         container = await resolve_message_container(self.bot, active_msg)
         if container is None:
+            await self._retire_unreachable(active_msg)
             return
 
         match = active_msg.match
@@ -300,6 +301,31 @@ class MatchTickerCog(commands.Cog):
         active_msg.ticker_state = state
         active_msg.is_ticker_finalized = state == MatchMessageState.RESULT_POSTED
         await active_msg.asave(update_fields=["ticker_message_id", "ticker_state", "is_ticker_finalized"])
+
+    async def _retire_unreachable(self, active_msg: ActiveMatchMessage) -> None:
+        """Stop revisiting a row whose channel Discord will not hand over.
+
+        Only once the match itself is over: there is nothing left to post about
+        it, so a permanent 403 (a restored season's threads, a channel the bot
+        was removed from) should take the row out of both loops rather than
+        cost a fetch a minute forever. A live match keeps retrying, because the
+        403 may be a permission someone is about to fix - `_close_poll` makes
+        the same call for a poll message that has gone.
+        """
+        if not is_container_unreachable(active_msg.container_id):
+            return
+        if active_msg.match.status not in FINAL_STATUSES:
+            return
+        if active_msg.is_poll_finalized and active_msg.is_ticker_finalized:
+            return
+
+        logger.warning(
+            f"Container {active_msg.container_id} for finished match {active_msg.match_id} is unreachable; "
+            "marking its poll and ticker finalized."
+        )
+        active_msg.is_poll_finalized = True
+        active_msg.is_ticker_finalized = True
+        await active_msg.asave(update_fields=["is_poll_finalized", "is_ticker_finalized"])
 
     @staticmethod
     def _desired_state(

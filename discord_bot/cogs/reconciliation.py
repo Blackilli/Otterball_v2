@@ -16,12 +16,25 @@ logger = logging.getLogger(__name__)
 class ReconciliationCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        self.polls_reconciled = False
 
     @commands.Cog.listener()
     async def on_ready(self):
         logger.info("Reconciliation check started.")
+        # The guild/channel/role upserts are cache reads and cheap, so they run
+        # again on every reconnect and pick up anything changed while offline.
         await self.reconcile_roles()
         await self.reconcile_channels()
+
+        # The poll sweep is not: it is one Discord fetch per poll that was never
+        # finalized, and `on_ready` fires on every gateway reconnect, not just
+        # startup. A restored season with a hundred open rows replayed all of it
+        # every time the connection blipped.
+        if self.polls_reconciled:
+            logger.info("Polls already reconciled this run; skipping the sweep.")
+            return
+
+        self.polls_reconciled = True
         await self.reconcile_active_polls()
 
     async def reconcile_channels(self):
