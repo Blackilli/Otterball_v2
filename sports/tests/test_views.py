@@ -754,6 +754,55 @@ class StatsViewTests(ViewTestCase):
 
         self.assertEqual(len(set(ids)), 2, "two charts on one page cannot share a script id")
 
+    def test_picker_lists_every_player_and_checks_the_named_ones(self):
+        """The reader can draw anyone, so the list is the whole field - the
+        server's ten are only the starting selection."""
+        self.play([{index: index for index in range(len(self.players))} for _ in range(3)])
+
+        html = self.client.get(reverse("sports:season-stats", args=[self.season.id])).content.decode()
+        picker = html.split('class="chart-picker"', 1)[1].split("</div>\n\n", 1)[0]
+
+        self.assertEqual(picker.count('type="checkbox"'), len(self.players))
+        self.assertEqual(picker.count("checked"), CHART_SERIES)
+        self.assertIn("data-select-all", picker)
+        self.assertIn("data-select-none", picker)
+
+    def test_picker_ships_hidden_because_it_does_nothing_without_script(self):
+        self.play([{0: 3, 1: 0}, {0: 3, 1: 3}])
+
+        response = self.client.get(reverse("sports:season-stats", args=[self.season.id]))
+
+        self.assertContains(response, "data-chart-picker hidden")
+
+    def test_every_line_and_label_is_addressable_by_user(self):
+        """Selecting a player means restyling their line, their label and their
+        swatches, so all three have to carry the id."""
+        self.play([{index: index for index in range(len(self.players))} for _ in range(3)])
+
+        html = self.client.get(reverse("sports:season-stats", args=[self.season.id])).content.decode()
+        chart = html.split('class="lines"', 1)[1]
+        lines, labels = chart.split('class="line-labels"', 1)
+        labels = labels.split("</g>", 1)[0]
+
+        self.assertEqual(lines.count("polyline"), len(self.players) * 2)
+        self.assertEqual(lines.count("data-user="), len(self.players))
+        # A label per player, with the field's hidden until they are selected.
+        self.assertEqual(labels.count("<text"), len(self.players))
+        self.assertEqual(labels.count("data-user="), len(self.players))
+        self.assertEqual(labels.count(" hidden>"), len(self.players) - CHART_SERIES)
+
+    def test_payload_carries_every_players_samples(self):
+        """The picker cannot fetch: a player the reader ticks has to already
+        have their history on the page."""
+        self.play([{index: index for index in range(len(self.players))} for _ in range(3)])
+
+        payload = self.board().chart.payload
+
+        self.assertEqual(len(payload["series"]), len(self.players))
+        self.assertTrue(all(entry["samples"] for entry in payload["series"]))
+        self.assertEqual(sum(entry["shown"] for entry in payload["series"]), CHART_SERIES)
+        self.assertEqual(payload["highlighted"], CHART_HIGHLIGHTED)
+
     def test_stats_tab_is_hidden_when_the_season_has_no_pool(self):
         self.pool.delete()
         self.make_match(offset_hours=3)

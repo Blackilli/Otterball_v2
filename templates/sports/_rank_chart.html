@@ -7,9 +7,10 @@ Rank runs top-down: 1st is at the top, which is the only direction that reads.
 {% endcomment %}
 <figure class="chart" data-rank-chart data-chart-id="{{ chart.dom_id }}">
     <figcaption>
-        Rank after every scored match. The leading {{ chart.named|length }} of
-        {{ chart.total_players }} players are named; the rest of the field is the faint band behind
-        them, so whoever led at any point is on the chart even when they did not finish there.
+        Rank after every scored match.
+        <span data-chart-caption>The leading {{ chart.named|length }} of
+        {{ chart.total_players }} players are named;</span> the rest of the field is the faint band
+        behind them, so whoever led at any point is on the chart even when they did not finish there.
     </figcaption>
 
     <div class="chart-frame">
@@ -31,29 +32,40 @@ Rank runs top-down: 1st is at the top, which is the only direction that reads.
             {% comment %}
                 Drawn back to front: the whole field, then the unnamed rest of
                 the top ten, then the coloured five. A highlighted line must
-                never end up underneath a grey one.
+                never end up underneath a grey one. The picker re-orders this
+                group when the selection changes, for the same reason - in SVG
+                document order *is* paint order.
             {% endcomment %}
-            {% for series in chart.field %}
-                <polyline class="line series-field" points="{{ series.polyline }}"></polyline>
-            {% endfor %}
-            {% for series in chart.named %}
-                {% if not series.slot %}
-                    <polyline class="line series-context" points="{{ series.polyline }}"></polyline>
-                {% endif %}
-            {% endfor %}
-            {% for series in chart.coloured %}
-                <polyline class="line {{ series.css_class }}" points="{{ series.polyline }}"></polyline>
-            {% endfor %}
+            <g class="lines">
+                {% for series in chart.field %}
+                    <polyline class="line series-field" data-user="{{ series.user_id }}"
+                              points="{{ series.polyline }}"></polyline>
+                {% endfor %}
+                {% for series in chart.named %}
+                    {% if not series.slot %}
+                        <polyline class="line series-context" data-user="{{ series.user_id }}"
+                                  points="{{ series.polyline }}"></polyline>
+                    {% endif %}
+                {% endfor %}
+                {% for series in chart.coloured %}
+                    <polyline class="line {{ series.css_class }}" data-user="{{ series.user_id }}"
+                              points="{{ series.polyline }}"></polyline>
+                {% endfor %}
+            </g>
 
             {% comment %}
                 Direct labels: what lets a reader name a line without consulting
                 the legend, and what the palette's light-mode contrast warning
-                requires as relief.
+                requires as relief. Everyone gets one; the field's are hidden
+                until the reader selects them, so script only has to move a
+                label that already exists.
             {% endcomment %}
-            {% for series in chart.named %}
-                <text x="{{ series.label_x }}" y="{{ series.label_y }}"
-                      class="line-label {{ series.css_class }}">{{ series.name|truncatechars:16 }}</text>
-            {% endfor %}
+            <g class="line-labels">
+                {% for series in chart.series %}
+                    <text x="{{ series.label_x }}" y="{{ series.label_y }}" data-user="{{ series.user_id }}"
+                          class="line-label {{ series.css_class }}"{% if series.is_field %} hidden{% endif %}>{{ series.name|truncatechars:16 }}</text>
+                {% endfor %}
+            </g>
 
             <g class="crosshair" hidden>
                 <line y1="{{ chart.plot_top }}" y2="{{ chart.plot_bottom }}"></line>
@@ -64,7 +76,7 @@ Rank runs top-down: 1st is at the top, which is the only direction that reads.
         <div class="chart-tooltip" hidden></div>
     </div>
 
-    <ul class="chart-legend">
+    <ul class="chart-legend" data-chart-legend>
         {% for series in chart.coloured %}
             <li><span class="swatch {{ series.css_class }}"></span>{{ series.name|truncatechars:20 }}</li>
         {% endfor %}
@@ -75,6 +87,34 @@ Rank runs top-down: 1st is at the top, which is the only direction that reads.
             <li><span class="swatch series-field"></span>rest of the field</li>
         {% endif %}
     </ul>
+
+    {% comment %}
+        The picker is script-only - the checkboxes submit nothing and there is
+        no server round trip - so it ships hidden and the module reveals it.
+        Without script the chart keeps its server-chosen ten and nothing dead
+        is on the page.
+    {% endcomment %}
+    <div class="chart-picker" data-chart-picker hidden>
+        <div class="picker-head">
+            <span class="picker-title">Players shown</span>
+            <span class="picker-actions">
+                <button type="button" class="picker-button" data-select-all>Select all</button>
+                <button type="button" class="picker-button" data-select-none>Select none</button>
+            </span>
+        </div>
+        <ul class="picker-list">
+            {% for series in chart.series %}
+                <li>
+                    <label>
+                        <input type="checkbox" value="{{ series.user_id }}"{% if not series.is_field %} checked{% endif %}>
+                        <span class="swatch {{ series.css_class }}" data-user="{{ series.user_id }}"></span>
+                        <span class="picker-name">{{ series.name|truncatechars:24 }}</span>
+                        <span class="picker-rank">{{ series.final_rank }}</span>
+                    </label>
+                </li>
+            {% endfor %}
+        </ul>
+    </div>
 
     {% comment %}
         json_script escapes the payload for a <script> context; the module

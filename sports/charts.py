@@ -153,7 +153,22 @@ class RankChart:
             "matches": self.match_labels,
             "entries": self.entry_count,
             "maxRank": self.max_rank,
-            "series": [{"name": s.name, "cls": s.css_class, "samples": s.samples} for s in self.named],
+            # The reader can change who is drawn, so *every* player ships their
+            # samples, not just the named ten - the alternative is a request
+            # per checkbox for data the page already rendered as a polyline.
+            "highlighted": CHART_HIGHLIGHTED,
+            "labelGap": LABEL_MIN_GAP,
+            "series": [
+                {
+                    "id": s.user_id,
+                    "name": s.name,
+                    "cls": s.css_class,
+                    "rank": s.final_rank,
+                    "shown": not s.is_field,
+                    "samples": s.samples,
+                }
+                for s in self.series
+            ],
             # Whoever actually led after each match. The named ten are the
             # *final* top ten, so early on the leader is often not among them -
             # without this the tooltip would open at 4th and leave the reader

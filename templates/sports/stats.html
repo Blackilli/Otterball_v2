@@ -54,7 +54,7 @@
                                     <tr{% if series.final_rank == 1 %} class="leader"{% endif %}>
                                         <td class="col-rank">{{ series.final_rank }}</td>
                                         <th scope="row" class="player">
-                                            <span class="swatch {{ series.css_class }}"></span>{{ series.name }}
+                                            <span class="swatch {{ series.css_class }}" data-user="{{ series.user_id }}"></span>{{ series.name }}
                                         </th>
                                         <td class="num">{{ series.best_rank }}</td>
                                         <td class="num">{{ series.worst_rank }}</td>

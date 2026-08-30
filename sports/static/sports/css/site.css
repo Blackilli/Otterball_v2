@@ -800,6 +800,13 @@ ul.vote-legend {
     dominant-baseline: middle;
 }
 
+/* The UA stylesheet's `[hidden] { display: none }` is an HTML-namespace rule,
+   so an SVG node keeps rendering with the attribute set - the same trap as the
+   crosshair below. Deselected players' labels need this to actually go away. */
+.rank-chart .line-label[hidden] {
+    display: none;
+}
+
 /* Stroke and fill are set on different elements on purpose. A `fill` on the
    shared series class beats `.line { fill: none }` on specificity and turns
    every line into a filled blob - so lines take stroke, and only the label and
@@ -927,6 +934,103 @@ ul.vote-legend {
     font-weight: 600;
     min-width: 2.2em;
     text-align: right;
+}
+
+/* Script-only, so it ships with `hidden` and the module reveals it - see
+   _rank_chart.html. Deselecting is how a reader follows one rivalry out of
+   forty lines, so the list has to stay usable at forty entries: it columns and
+   scrolls rather than pushing the chart off the screen. */
+.chart-picker {
+    margin: 14px 0 0;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    padding: 10px 12px;
+}
+
+.chart-picker[hidden] {
+    display: none;
+}
+
+.picker-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.picker-title {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text-muted);
+}
+
+.picker-actions {
+    display: flex;
+    gap: 6px;
+}
+
+.picker-button {
+    font: inherit;
+    font-size: 0.76rem;
+    color: var(--text);
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 3px 12px;
+    cursor: pointer;
+}
+
+.picker-button:hover {
+    border-color: var(--text-muted);
+}
+
+.picker-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+    gap: 2px 12px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    max-height: 220px;
+    overflow-y: auto;
+}
+
+.picker-list label {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 3px 4px;
+    border-radius: 4px;
+    font-size: 0.82rem;
+    cursor: pointer;
+}
+
+.picker-list label:hover {
+    background: var(--grid);
+}
+
+.picker-list .swatch {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 2px;
+    flex: none;
+}
+
+.picker-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.picker-rank {
+    margin-left: auto;
+    font-size: 0.74rem;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-muted);
 }
 
 .chart-legend {
