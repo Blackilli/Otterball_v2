@@ -69,6 +69,11 @@ TZ=Europe/Berlin
 # (gunicorn binds it, the healthcheck probes it, compose publishes it).
 WEB_PORT=8000
 
+# Celery prefork children. These tasks wait on HTTP rather than compute, and
+# every child is a full Django process (~60 MB), so the default of one per core
+# buys nothing on a small VM.
+CELERY_CONCURRENCY=2
+
 # User the containers run as. Set these to the owner of your `./media` folder
 # (`id -u` / `id -g`) so ingested team logos are not written as a foreign user.
 PUID=1000
@@ -185,6 +190,9 @@ services:
     volumes:
       - ./media:/app/media
       - ./static:/app/static
+    # A cap turns a runaway container into one restart rather than an OOM that
+    # takes the VM with it. Measured usage is well under each of these.
+    mem_limit: 512m
     depends_on:
       db:
         condition: service_healthy
@@ -207,10 +215,14 @@ services:
     command: uv run python manage.py runbot
     volumes:
       - ./media:/app/media
+    mem_limit: 512m
     depends_on:
       db:
         condition: service_healthy
       valkey:
+        condition: service_healthy
+      # `web` is the container that migrates; see the note under this file.
+      web:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "test $$(find /tmp/bot_heartbeat -mmin -2)"]
@@ -224,13 +236,16 @@ services:
     restart: unless-stopped
     <<: *default-logging
     env_file: .env
-    command: uv run celery -A otterball_v2 worker --loglevel=info
+    command: uv run celery -A otterball_v2 worker --loglevel=info --concurrency=${CELERY_CONCURRENCY:-2}
     volumes:
       - ./media:/app/media
+    mem_limit: 768m
     depends_on:
       db:
         condition: service_healthy
       valkey:
+        condition: service_healthy
+      web:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "uv run celery -A otterball_v2 inspect ping -d celery@$$HOSTNAME"]
@@ -245,10 +260,13 @@ services:
     <<: *default-logging
     env_file: .env
     command: uv run celery -A otterball_v2 beat --loglevel=info
+    mem_limit: 384m
     depends_on:
       db:
         condition: service_healthy
       valkey:
+        condition: service_healthy
+      web:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "ps aux | grep 'celery beat' | grep -v grep"]
@@ -267,6 +285,7 @@ services:
     # older guides use, or every `compose up` after a `pull` starts empty.
     volumes:
       - ./pgdata:/var/lib/postgresql
+    mem_limit: 1g
     # Uncomment to reach the database from the host; not needed by the cluster,
     # which always talks to it on 5432 over the compose network.
     # ports:
@@ -281,6 +300,9 @@ services:
     image: valkey/valkey:8-alpine
     restart: unless-stopped
     <<: *default-logging
+    # No maxmemory: this is the Celery broker as well as the cache, and an
+    # eviction here would silently drop queued tasks. The cap is the backstop.
+    mem_limit: 256m
     healthcheck:
       test: ["CMD", "valkey-cli", "ping"]
       interval: 5s
@@ -288,8 +310,17 @@ services:
       retries: 5
 ```
 
-*Note: `depends_on` uses `condition: service_healthy` throughout, so nothing
-starts against a Postgres still running initdb.*
+*Note: `depends_on` uses `condition: service_healthy` throughout. `bot`, `worker`
+and `beat` additionally wait for `web`, because `web` is the container that runs
+`migrate` — on a fresh database, `beat` otherwise dies on django_celery_beat's
+missing tables and the worker's ingestion catch-up finds no `PredictionPool`.
+Both recover on the next restart; waiting means neither has to.*
+
+*Note: the `mem_limit` values are backstops, not budgets. Measured on an idle
+cluster: web 113 MiB, worker 182 MiB at `CELERY_CONCURRENCY=2`, beat 107 MiB,
+Postgres 34 MiB, Valkey 11 MiB. Raise a limit if `docker inspect` reports
+`OOMKilled=true` for that service — a container hitting its own cap is a restart,
+where the same total spread across an uncapped host is the VM going down.*
 
 *⚠️ Migrating an existing deployment: if your `db` mounted
 `postgres_data:/var/lib/postgresql/data` — the path older guides use — that

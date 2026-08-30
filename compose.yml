@@ -39,6 +39,7 @@ services:
     restart: unless-stopped
     <<: *default-logging
     volumes: [postgres_data:/var/lib/postgresql]
+    mem_limit: 1g
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-secret_password}
@@ -58,6 +59,9 @@ services:
     restart: unless-stopped
     <<: *default-logging
     environment: ['TZ=${TZ:-Europe/Berlin}']
+    # No maxmemory: this is the Celery broker as well as the cache, and an
+    # eviction here silently drops queued tasks. The cap is the backstop.
+    mem_limit: 256m
     networks: [otterball_network]
     healthcheck:
       test: [CMD, valkey-cli, ping]
@@ -78,6 +82,10 @@ services:
       && uv run python manage.py collectstatic --noinput && uv run gunicorn otterball_v2.wsgi:application
       --bind 0.0.0.0:$${WEB_PORT:-8000}"
     volumes: [django_media:/app/media, django_static:/app/static]
+    # A cap turns a runaway container into one restart instead of an OOM that
+    # takes the whole host with it. Raise if a service is killed under load;
+    # `docker stats` shows what each one actually uses.
+    mem_limit: 512m
     ports: ['${WEB_PORT:-8000}:${WEB_PORT:-8000}']
     depends_on:
       db:
@@ -104,10 +112,17 @@ services:
     # as application emoji, so the bot needs the media volume too - without it
     # every registration fails into its own except-Exception and logs a line.
     volumes: [django_media:/app/media]
+    mem_limit: 512m
     depends_on:
       db:
         condition: service_healthy
       valkey:
+        condition: service_healthy
+      # `web` is the container that runs migrate, and on a fresh database beat
+      # dies on django_celery_beat's missing tables while the worker's catch-up
+      # finds no PredictionPool. Both recover on the next restart; waiting for
+      # the migration to land means neither has to.
+      web:
         condition: service_healthy
     networks: [otterball_network]
     healthcheck:
@@ -124,12 +139,21 @@ services:
     <<: *default-logging
     environment:
       <<: *shared-environment
-    command: uv run celery -A otterball_v2 worker --loglevel=info
+    # 2, not the default one-per-core: these tasks wait on HTTP, they do not
+    # compute, and every prefork child is a full Django process.
+    command: uv run celery -A otterball_v2 worker --loglevel=info --concurrency=${CELERY_CONCURRENCY:-2}
     volumes: [django_media:/app/media]
+    mem_limit: 768m
     depends_on:
       db:
         condition: service_healthy
       valkey:
+        condition: service_healthy
+      # `web` is the container that runs migrate, and on a fresh database beat
+      # dies on django_celery_beat's missing tables while the worker's catch-up
+      # finds no PredictionPool. Both recover on the next restart; waiting for
+      # the migration to land means neither has to.
+      web:
         condition: service_healthy
     networks: [otterball_network]
     healthcheck:
@@ -149,10 +173,17 @@ services:
     environment:
       <<: *shared-environment
     command: uv run celery -A otterball_v2 beat --loglevel=info
+    mem_limit: 384m
     depends_on:
       db:
         condition: service_healthy
       valkey:
+        condition: service_healthy
+      # `web` is the container that runs migrate, and on a fresh database beat
+      # dies on django_celery_beat's missing tables while the worker's catch-up
+      # finds no PredictionPool. Both recover on the next restart; waiting for
+      # the migration to land means neither has to.
+      web:
         condition: service_healthy
     networks: [otterball_network]
     healthcheck:
