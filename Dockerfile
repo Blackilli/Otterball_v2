@@ -15,6 +15,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq-dev \
     libjpeg-dev \
     zlib1g-dev \
+    gosu \
+    curl \
+    procps \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -35,5 +38,17 @@ RUN uv sync --frozen --no-dev
 
 ENV PATH="/app/.venv/bin:$PATH"
 
-USER appuser
-EXPOSE 8000
+# The container starts as root only so docker-entrypoint.sh can remap appuser to
+# PUID/PGID; it drops to that user via gosu before running anything.
+ENV PUID=8888 \
+    PGID=8888 \
+    WEB_PORT=8000
+
+COPY --chmod=755 docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+
+EXPOSE ${WEB_PORT}
+
+# Default command: the web service. The other three services (bot, worker, beat)
+# override it with their own; see compose.yml.
+CMD ["sh", "-c", "uv run python manage.py migrate && uv run python manage.py ensure_schedule && uv run python manage.py collectstatic --noinput && uv run gunicorn otterball_v2.wsgi:application --bind 0.0.0.0:${WEB_PORT:-8000}"]

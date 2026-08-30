@@ -1,18 +1,22 @@
 # Otterball v2 🦦🏆
 Thank you clanker for the Readme <3
 
-Otterball v2 is a highly performant, dockerized sports prediction platform (e.g., for the FIFA World Cup) that seamlessly connects an interactive Django web dashboard with an advanced Discord bot.
+Otterball v2 is a dockerized sports prediction platform — built around the FIFA World Cup, and now also running NFL pools — pairing a Discord bot with a Django web side that publishes the same data as read-only public pages.
 
-The system utilizes native Discord polls for prediction submissions, manages automated match day threads, calculates dynamic leaderboards using the official Standard Competition Ranking (1-2-2-4 ranking method), and processes data-intensive background tasks asynchronously within a cluster.
+Predictions are made in Discord and nowhere else: the bot posts a native poll per fixture, closes it at kickoff, scores it against ingested match data, and keeps a pinned leaderboard ranked by the official Standard Competition Ranking (1-2-2-4). Match ingestion and scoring run asynchronously on a Celery cluster.
 
 ## ⚡ Core Features
 
-- **Automated Match Day Polls:** Automatically generates weekly or match-day-specific Discord threads, including native polls for upcoming fixtures. Poll durations are precisely capped to close exactly at kickoff time.
+- **Automated Match Day Polls:** Posts one native Discord poll per upcoming fixture directly into the pool channel and pins it, on a per-pool schedule (weekday, time and lookahead window). Each poll's duration is capped to close exactly at kickoff — which also caps a batch at Discord's 32-day maximum poll duration.
+- **Live Match Ticker:** One message per poll, edited in place through its whole lifecycle (Components V2): a pre-kickoff reminder naming role members who still have no pick, then the live score, then the final result plus everyone who called it. Editing rather than reposting means only the first post pings anyone, and users can mute reminders per pool via `/notifications` or the message's own button.
 - **True Sports Leaderboard (Standard Competition Ranking):** Computes rankings mathematically. If two players share 1st place, 2nd place is skipped, and the next player lands directly on 3rd place. The formatting prevents breaking Discord's character limits via dynamic *Pleb-Splitting*.
-- **Real-Time Reconciliation:** Asynchronous workers synchronize submitted poll votes directly with the PostgreSQL database immediately after a poll closes, ensuring a tamper-proof pipeline.
-- **Garbage Removal System:** Automatically cleans up ticker channels and threads by removing annoying, Discord-generated system messages (*"The poll results are in!"*) both in real-time and via a historical boot sweep.
+- **Real-Time Reconciliation:** Votes are captured live from Discord's poll events, then fully re-derived from the poll itself twice — once on bot startup for every open poll, and once at kickoff after the poll is closed. That second pass is final (a closed poll cannot change) and deletes votes retracted while the bot was offline, which is what makes the pipeline tamper-proof.
+- **Garbage Removal System:** Removes Discord's own noise from the pool channel — *"The poll results are in!"* and the bot's *"X pinned a message"* notices — both live and via a historical boot sweep, and only in channels the bot was actually pointed at.
 - **Backup & Restore:** `export_db` / `import_db` management commands bundle the full database *and* the media files into one compressed archive and restore it cleanly, skipping derived/ephemeral tables (contenttypes, sessions, admin logs, Celery task results). The database half uses natural keys, so it restores into an empty database on another server without renumbering anything that matters.
-- **Modern Deployment:** Ultra-fast multi-stage Docker builds leveraging the modern `uv` package manager and BuildKit caching.
+- **Multi-Sport Ingestion:** Soccer comes from the FIFA API; the NFL is deliberately dual-sourced from ESPN (schedule plus live scores) and nflverse (an independent backstop for final results, cross-referenced by ESPN event id). Every provider id lives in its own mapping table, so ingestion is idempotent and a new provider needs no changes to the core models.
+- **Public Web Pages:** Read-only and season-scoped — upcoming fixtures, the knockout bracket, pool standings, and a stats page whose rank-over-time chart is server-rendered SVG (complete with JavaScript off). The standings read the very same ranking code as the bot's pinned message, so the site and Discord cannot disagree about who is second.
+- **Guided Pool Setup:** `manage.py create_pool` / `check_pool`, or the admin's *Start a new pool* page, which ends in the same readiness report — because almost every way a pool can be misconfigured is otherwise silent.
+- **Modern Deployment:** Fast Docker builds leveraging the modern `uv` package manager and BuildKit caching.
 
 ## 🛠️ Tech Stack
 
@@ -32,9 +36,11 @@ The system utilizes native Discord polls for prediction submissions, manages aut
 Since the package is public, your production server can pull the pre-built image directly from the GitHub Container Registry (GHCR) without needing any authentication.
 
 ### 1. Prerequisites
-Ensure Docker and the Docker Compose plugin are installed on your host system:
+Ensure Docker Engine and the Docker Compose plugin are installed on your host system.
+Follow [Docker's own install guide](https://docs.docker.com/engine/install/) — it sets up
+the apt repository and installs both. With that repository already configured:
 ```bash
-sudo apt-get update && sudo apt-get install docker-compose-plugin
+sudo apt-get update && sudo apt-get install -y docker-ce docker-compose-plugin
 ```
 
 ### 2. Setup Environment Variables (`.env`)
@@ -49,10 +55,22 @@ DJANGO_SECRET_KEY='your-secret-key-containing-#-or-$'
 ALLOWED_HOSTS=your-domain.com,127.0.0.1
 TZ=Europe/Berlin
 
+# Host/container port the web service listens on and is published under
+# (gunicorn binds it, the healthcheck probes it, compose publishes it).
+WEB_PORT=8000
+
+# User the containers run as. Set these to the owner of your `./media` folder
+# (`id -u` / `id -g`) so ingested team logos are not written as a foreign user.
+PUID=1000
+PGID=1000
+
 # PostgreSQL 18 Configuration (consumed by the `db` container)
 POSTGRES_USER=postgres
 POSTGRES_PASSWORD=your_secure_database_password
 POSTGRES_DB=otterball_db
+# Only the port Postgres is published under on the host - the containers always
+# talk to it on 5432 inside the network. Change it if 5432 is already taken.
+POSTGRES_PORT=5432
 
 # This is what Django/Celery actually connect with — it must match the
 # POSTGRES_* values above and point at the `db` service by its container name.
@@ -69,75 +87,190 @@ REDIS_URL=redis://valkey:6379/0
 *Note: `ENV=production` is what disables `DEBUG` (see `otterball_v2/settings.py`) — there is no separate `DEBUG` variable.*
 *Note: if `DATABASE_URL` is left unset, Django silently falls back to a local SQLite file — always set it explicitly in production.*
 
+#### Generating the secrets
+
+Two of these values must be generated, one is handed to you by Discord, and none
+of them should ever be committed:
+
+```bash
+# DJANGO_SECRET_KEY - hex output, so it can never contain a `#` or `$` and needs
+# no quoting in the .env file:
+openssl rand -hex 64
+
+# ...or, if you already have the project checked out, Django's own generator
+# (its alphabet does include `#` and `$`, so wrap the result in single quotes):
+uv run python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"
+
+# POSTGRES_PASSWORD - hex again, because this value also has to survive being
+# pasted into the DATABASE_URL below, where `@`, `:` and `/` would break parsing:
+openssl rand -hex 32
+
+# PUID / PGID - not secret, just the user owning your ./media directory:
+id -u; id -g
+```
+
+Then mirror the password into `DATABASE_URL` — it is a second copy of the same
+secret, and the two silently drifting apart is the most common setup failure:
+
+```env
+POSTGRES_PASSWORD=6f1c...   # from `openssl rand -hex 32`
+DATABASE_URL=postgresql://postgres:6f1c...@db:5432/otterball_db
+```
+
+`DISCORD_BOT_TOKEN` is **not** generated locally: create an application at
+<https://discord.com/developers/applications>, add a bot, and copy its token
+(*Bot → Reset Token* — Discord only shows it once). While you are on that page,
+enable **Server Members Intent**, which the bot requires to log in at all.
+
+Keep `.env` out of version control (`.gitignore` already covers it) and readable
+only by you: `chmod 600 .env`. If a token or key does leak, rotate it — Discord
+regenerates a token on *Reset Token*, and rotating `DJANGO_SECRET_KEY` only
+invalidates existing sessions.
+
 ### 3. Create the Directories & `compose.yml`
 Before launching the containers, create the host directory for persistent assets like team logos:
 ```bash
 mkdir -p media
 ```
 
+The containers start as root purely so their entrypoint can remap their internal
+user to `PUID`/`PGID`, then drop to it via `gosu` — so with `PUID`/`PGID` set to
+your own ids, everything the worker downloads into `./media` stays owned by you.
+
 Create a `compose.yml` file next to your `.env` pointing to the official GHCR image:
 
 ```yaml
+# Log rotation, so a long-running deploy cannot fill the disk with json-file logs.
+x-logging: &default-logging
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
 services:
   web:
     image: ghcr.io/blackilli/otterball_v2:latest
     restart: unless-stopped
+    <<: *default-logging
     env_file: .env
+    # No `command:` — the image's default one migrates, installs the Celery Beat
+    # schedule, collects static files and then runs gunicorn on WEB_PORT.
     ports:
-      - "127.0.0.1:8000:8000"
+      - "127.0.0.1:${WEB_PORT:-8000}:${WEB_PORT:-8000}"
     volumes:
       - ./media:/app/media
+      - django_static:/app/static
     depends_on:
-      - db
-      - valkey
+      db:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:$${WEB_PORT:-8000}/health/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
   bot:
     image: ghcr.io/blackilli/otterball_v2:latest
     restart: unless-stopped
+    <<: *default-logging
     env_file: .env
     command: uv run python manage.py runbot
     volumes:
       - ./media:/app/media
     depends_on:
-      - db
-      - valkey
+      db:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "test $$(find /tmp/bot_heartbeat -mmin -2)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
   worker:
     image: ghcr.io/blackilli/otterball_v2:latest
     restart: unless-stopped
+    <<: *default-logging
     env_file: .env
     command: uv run celery -A otterball_v2 worker --loglevel=info
     volumes:
       - ./media:/app/media
     depends_on:
-      - db
-      - valkey
+      db:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "uv run celery -A otterball_v2 inspect ping -d celery@$$HOSTNAME"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
 
   beat:
     image: ghcr.io/blackilli/otterball_v2:latest
     restart: unless-stopped
+    <<: *default-logging
     env_file: .env
     command: uv run celery -A otterball_v2 beat --loglevel=info
-    volumes:
-      - ./media:/app/media
     depends_on:
-      - db
-      - valkey
+      db:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "ps aux | grep 'celery beat' | grep -v grep"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
   db:
     image: postgres:18-alpine
     restart: unless-stopped
+    <<: *default-logging
     env_file: .env
+    # Postgres 18 keeps its cluster in /var/lib/postgresql/18/docker and declares
+    # /var/lib/postgresql as its volume — mount that, NOT the /data subdirectory
+    # older guides use, or every `compose up` after a `pull` starts empty.
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql
+    # Uncomment to reach the database from the host; not needed by the cluster,
+    # which always talks to it on 5432 over the compose network.
+    # ports:
+    #   - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   valkey:
     image: valkey/valkey:8-alpine
     restart: unless-stopped
+    <<: *default-logging
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
 
 volumes:
   postgres_data:
+  django_static:
 ```
+
+*Note: `depends_on` uses `condition: service_healthy` throughout, so nothing
+starts against a Postgres still running initdb. If you are upgrading an existing
+deployment that mounted `postgres_data:/var/lib/postgresql/data`, take an
+`export_db` bundle first — that path never held the Postgres 18 cluster, so the
+data you want is in the anonymous volume the old container created.*
 
 ### 4. Configure Production Nginx
 For maximum performance, configure the host's Nginx proxy to bypass Django and serve the persistent `media/` folder (team logos) directly:
@@ -149,6 +282,17 @@ location /media/ {
 }
 ```
 
+Everything else proxies to `WEB_PORT`, so if you change that value, change it here too:
+
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:8000;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
+
 ### 5. Pull and Start the Application
 Execute the following commands to pull the latest image and boot up the cluster:
 ```bash
@@ -156,7 +300,41 @@ sudo docker compose pull
 sudo docker compose up -d
 ```
 
-### 6. Updates & Continuous Deployment
+### 6. Create Your First Pool
+A running cluster has no pool yet — and almost every way a pool can be misconfigured is
+silent, so finish with the readiness check. Run these against the `web` container
+(`sudo docker compose exec web uv run python manage.py …`):
+
+```bash
+# 1. Sport data: competition, season, rounds, teams (logos + colours), schedule.
+manage.py sync_nfl_infra                 # or sync_fifa_infra --sync-competitions …
+
+# 2. The pool itself, its poll schedule and its points per round.
+manage.py create_pool --name "NFL 2026" --sport AMERICAN_FOOTBALL --year 2026 \
+    --weekdays 2 --time 18:00 --lookahead 7 --reminder-lead 60 \
+    --points "Regular Season=1,Wild Card=2,Divisional=3,Conference Championship=4,Super Bowl=5"
+
+# 3. Bind it to a guild + channel. The bot must have connected once before this:
+#    it is what creates the guild/channel/role rows, so until it has, there is
+#    nothing to bind to and the command refuses with a message saying so.
+manage.py create_pool --name "NFL 2026" --sport AMERICAN_FOOTBALL --year 2026 \
+    --guild <guild_id> --channel <channel_id> --notification-role <role_id>
+
+# 4. Confirm it is actually ready (exits non-zero on FAIL, so it works as a deploy gate).
+manage.py check_pool
+```
+
+Within a minute of step 3 the bot posts the season's welcome message and its pinned
+leaderboard into the channel — no restart needed. The same flow has a guided page at
+*Prediction pools → Start a new pool* in `/admin/`, and `create_pool` is idempotent, which
+is why steps 2 and 3 are the same command.
+
+Celery Beat is database-driven, so a task in the code does nothing until a `PeriodicTask`
+row exists for it. The `web` container installs those with `ensure_schedule` on every start,
+and a starting worker runs any overdue infrastructure sync once — so a spell with Beat down
+does not strand a pool without fixtures. `check_pool` reports a stale schedule too.
+
+### 7. Updates & Continuous Deployment
 Whenever the GitHub Actions pipeline finishes baking a new version, update your live container stack by running:
 ```bash
 sudo docker compose pull && sudo docker compose up -d
@@ -168,8 +346,8 @@ sudo docker compose pull && sudo docker compose up -d
 
 The repository ships its own `compose.yml` (services: `db`, `valkey`, `web`, `bot`, `worker`, `beat`), already configured to `build: .` from the local `Dockerfile` with named volumes, an internal `otterball_network`, and healthchecks for every service.
 
-1. Clone the repository: `git clone https://github.com/blackilli/Otterball_v2.git`
-2. Create a `.env` file next to `compose.yml` (see the production `.env` example above — `DATABASE_URL` should point at `db` and `REDIS_URL` at `valkey`, e.g. `redis://valkey:6379/0`).
+1. Clone the repository: `git clone https://github.com/Blackilli/Otterball_v2.git`
+2. Create a `.env` file next to `compose.yml` (see the production `.env` example above — `DATABASE_URL` should point at `db` and `REDIS_URL` at `valkey`, e.g. `redis://valkey:6379/0`). `WEB_PORT`, `POSTGRES_PORT`, `PUID` and `PGID` all have defaults (`8000`, `5432`, `8888`, `8888`), so set them only if a port is taken or you bind-mount `media/` from the host.
 3. Build and start the full cluster:
 ```bash
 docker compose up -d --build
@@ -177,20 +355,23 @@ docker compose up -d --build
 
 ### Without Docker
 
-Package management is via [`uv`](https://docs.astral.sh/uv/) (Python 3.14+ required). You'll need a local PostgreSQL and Redis/Valkey instance and a `DATABASE_URL`/`REDIS_URL` pointing at them (or a `.env` file, since `manage.py` reads it via `os.getenv`).
+Package management is via [`uv`](https://docs.astral.sh/uv/) (Python 3.14+ required). You'll need a local PostgreSQL and Redis/Valkey instance, plus `DATABASE_URL` and `REDIS_URL` pointing at them. Nothing in the Python code loads a `.env` file — that is compose's job — so export the variables into your shell yourself:
 
 ```bash
-uv sync                                            # install dependencies
-uv run python manage.py migrate                    # apply migrations
-uv run python manage.py runserver                  # Django admin/web app
-uv run python manage.py runbot                      # Discord bot
+set -a && source .env && set +a                      # bash/zsh: load .env into the shell
+
+uv sync                                              # install dependencies
+uv run python manage.py migrate                      # apply migrations
+uv run python manage.py ensure_schedule              # install the Celery Beat schedule
+uv run python manage.py runserver                    # Django admin/web app
+uv run python manage.py runbot                       # Discord bot
 uv run celery -A otterball_v2 worker --loglevel=info # Celery worker
 uv run celery -A otterball_v2 beat --loglevel=info   # Celery Beat scheduler
 
-uv run python manage.py test                        # run the full test suite
+uv run python manage.py test                         # run the full test suite
 ```
 
-Pre-commit hooks (pyupgrade, django-upgrade, black, isort, `uv lock`/`uv sync`, the full Django test suite, and gitleaks) run automatically on commit — expect commits to be slow or blocked if any of these fail.
+Pre-commit hooks (pyupgrade, django-upgrade, yamlfix, black, isort, `uv lock`/`uv sync`, the full Django test suite, and gitleaks) run automatically on commit — expect commits to be slow or blocked if any of these fail.
 
 ### Database Backup & Restore
 
@@ -206,9 +387,10 @@ uv run python manage.py import_db backups/otterball_xxx.tar.gz --flush   # resto
 
 The project includes an optimized GitHub Actions pipeline (`.github/workflows/build-image.yml`) that automatically triggers on every push or pull request to the `master` branch.
 
-- **Registry:** GitHub Container Registry (`ghcr.io/blackilli/otterball_v2`)
+- **Registry:** GitHub Container Registry (`ghcr.io/blackilli/otterball_v2` — GHCR lowercases the repository name)
 - **Caching:** Utilizes the native GitHub Actions cache backend (`type=gha`), ensuring that unchanged layers and the `uv` cache are reused. Subsequent builds typically complete in under 10 seconds.
-- **Tags:** Every image is tagged with the short Git commit SHA, and builds on the default branch automatically receive the `latest` tag.
+- **Tags:** Every image is tagged with its branch or PR ref and the short Git commit SHA; builds on the default branch additionally receive the `latest` tag.
+- **Pull requests build but never publish:** the push step is gated on `github.event_name != 'pull_request'`, so a PR only proves the image still builds.
 - **Manual Trigger:** Enabled via `workflow_dispatch`, allowing you to manually force a build via the GitHub Web UI or GitHub CLI (`gh workflow run`) at any time.
 
 Two additional workflows integrate [Claude Code](https://claude.com/product/claude-code) into the PR flow:
