@@ -3,11 +3,13 @@ from io import StringIO
 
 import discord
 from asgiref.sync import async_to_sync, sync_to_async
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.management import CommandError, call_command
 from django.db import connection
 from django.test import TestCase
 from django.test.utils import CaptureQueriesContext
+from django.urls import reverse
 from django.utils import timezone
 
 from discord_bot.cogs.channel_sync import ChannelSyncCog
@@ -2012,14 +2014,23 @@ class PoolOnboardingTests(TestCase):
         await cog.onboard(guild_pool)
         return cog
 
+    def welcome_text(self, send=None):
+        """Everything the welcome card says, as one string.
+
+        A Components V2 message carries no `content` and no embed - all of its
+        text lives in the component tree.
+        """
+        send = send or self.discord_channel.sends[0]
+        return " ".join(text_of(send["view"]))
+
     async def test_a_new_binding_gets_a_welcome_then_a_leaderboard(self):
         await self.run_pass()
 
-        contents = [send["content"] for send in self.discord_channel.sends]
-        self.assertEqual(len(contents), 2)
-        self.assertIn("Welcome to NFL 2026 Pool", contents[0])
+        sends = self.discord_channel.sends
+        self.assertEqual(len(sends), 2)
+        self.assertIn("Welcome to NFL 2026 Pool", self.welcome_text())
         # Order matters: the welcome introduces the leaderboard below it.
-        self.assertEqual(contents[1], LEADERBOARD_PLACEHOLDER)
+        self.assertEqual(sends[1]["content"], LEADERBOARD_PLACEHOLDER)
 
         guild_pool = await DiscordGuildPool.objects.aget(pk=self.guild_pool.pk)
         self.assertEqual(guild_pool.welcome_msg, self.discord_channel.sends[0]["message"].id)
@@ -2086,7 +2097,7 @@ class PoolOnboardingTests(TestCase):
         config.poll_creation_weekdays = []
 
         self.assertIsNone(next_poll_creation(config))
-        self.assertIn("not scheduled yet", describe_poll_schedule(config))
+        self.assertIn("no poll day is set", describe_poll_schedule(config))
 
     async def test_only_the_leaderboard_is_pinned(self):
         """Pins are capped at 50 a channel and the polls need them; the
@@ -2098,28 +2109,64 @@ class PoolOnboardingTests(TestCase):
         self.assertTrue(leaderboard.pinned)
 
     async def test_the_welcome_pings_the_notification_role(self):
+        """A mention inside a V2 component still notifies - it is this post's
+        whole delivery mechanism, and moving off the embed did not cost it."""
         await self.run_pass()
 
         send = self.discord_channel.sends[0]
-        self.assertIn(self.discord_role.mention, send["content"])
+        self.assertIn(self.discord_role.mention, self.welcome_text(send))
         self.assertTrue(send["allowed_mentions"].roles)
         self.assertFalse(send["allowed_mentions"].everyone)
+
+    async def test_the_welcome_carries_the_notification_settings_button(self):
+        """The poll channel is read-only, so the welcome is the one message a
+        player can act on - and the reminder they would otherwise wait for only
+        appears once they are already being pinged."""
+        await self.run_pass()
+
+        view = self.discord_channel.sends[0]["view"]
+        buttons = [c for c in walk_components(view) if c["type"] == COMPONENT_BUTTON]
+        self.assertEqual([b["custom_id"] for b in buttons], [f"otterball:notifications:{self.pool.id}"])
+
+    async def test_a_pool_without_reminders_gets_no_button(self):
+        """With no reminder to switch off there is nothing to offer."""
+        await PoolConfiguration.objects.filter(pool=self.pool).aupdate(reminder_lead_minutes=0)
+
+        await self.run_pass()
+
+        view = self.discord_channel.sends[0]["view"]
+        self.assertEqual([c for c in walk_components(view) if c["type"] == COMPONENT_BUTTON], [])
 
     async def test_the_welcome_states_the_schedule_and_the_points(self):
         await self.run_pass()
 
-        embed = self.discord_channel.sends[0]["embed"]
-        values = {field.name: field.value for field in embed.fields}
-        self.assertIn("Wednesday", values["🗳️ When polls appear"])
+        values = {"": self.welcome_text()}
+        schedule = values[""]
+        self.assertIn("Wednesday", schedule)
         # The hour is Discord's own markup, so every player reads it in their
         # own timezone rather than the server's.
         config = await PoolConfiguration.objects.aget(pool=self.pool)
         expected = int(next_poll_creation(config).timestamp())
-        self.assertIn(f"<t:{expected}:t>", values["🗳️ When polls appear"])
-        self.assertNotIn("Europe/", values["🗳️ When polls appear"])
-        self.assertIn("**Regular Season** — 1 point(s) per correct pick", values["🏆 What a pick is worth"])
-        self.assertIn("**Super Bowl** — 5 point(s) per correct pick", values["🏆 What a pick is worth"])
-        self.assertIn("60 minutes", values["⏰ Reminders"])
+        self.assertIn(f"<t:{expected}:t>", schedule)
+        self.assertNotIn("Europe/", schedule)
+        # A week is a week, and one point is one point: no "7 day(s)" and no
+        # "1 point(s)" anywhere in the post.
+        self.assertIn("A week of fixtures", schedule)
+        self.assertIn("Regular Season — **1** point per correct pick", schedule)
+        self.assertIn("Super Bowl — **5** points per correct pick", schedule)
+        self.assertNotIn("(s)", schedule)
+        self.assertIn("An hour before", schedule)
+
+    async def test_the_welcome_links_to_the_season_on_the_web(self):
+        """The same season is readable outside Discord, and nothing in the
+        channel said so."""
+        await self.run_pass()
+
+        links = self.welcome_text()
+
+        for name in ("season-matches", "season-leaderboard", "season-stats"):
+            path = reverse(f"sports:{name}", args=[self.season.pk])
+            self.assertIn(f"{settings.PUBLIC_SITE_URL}{path}", links)
 
     async def test_a_second_pass_posts_nothing(self):
         cog = await self.run_pass()
@@ -2138,9 +2185,8 @@ class PoolOnboardingTests(TestCase):
         self.assertEqual(len(self.discord_channel.sends), 2)
         welcome = self.discord_channel.sends[0]["message"]
         self.assertEqual(len(welcome.edits), 1)
-        embed = welcome.edits[0]["embed"]
-        values = {field.name: field.value for field in embed.fields}
-        self.assertIn("**Super Bowl** — 9 point(s) per correct pick", values["🏆 What a pick is worth"])
+        edited = " ".join(text_of(welcome.edits[0]["view"]))
+        self.assertIn("Super Bowl — **9** points per correct pick", edited)
 
     async def test_the_flag_is_off_and_only_the_leaderboard_is_posted(self):
         """Every binding that predates this cog has the flag off, so a deploy
@@ -2151,6 +2197,37 @@ class PoolOnboardingTests(TestCase):
 
         contents = [send["content"] for send in self.discord_channel.sends]
         self.assertEqual(contents, [LEADERBOARD_PLACEHOLDER])
+
+    async def test_an_embed_era_welcome_is_replaced_rather_than_edited(self):
+        """Discord cannot add the IS_COMPONENTS_V2 flag to a message sent
+        without it, so the old post has to go - and silently, because the role
+        was already told about this season."""
+        cog = await self.run_pass()
+        original = self.discord_channel.sends[0]["message"]
+        await DiscordGuildPool.objects.filter(pk=self.guild_pool.pk).aupdate(welcome_is_v2=False)
+        cog.welcomes.clear()
+
+        await self.run_pass(cog)
+
+        self.assertEqual(len(self.discord_channel.sends), 3)  # welcome, leaderboard, replacement
+        replacement = self.discord_channel.sends[2]
+        self.assertFalse(replacement["allowed_mentions"].roles)
+        self.assertTrue(original.deleted)
+        self.assertEqual(original.edits, [])
+
+        guild_pool = await DiscordGuildPool.objects.aget(pk=self.guild_pool.pk)
+        self.assertEqual(guild_pool.welcome_msg, replacement["message"].id)
+        self.assertTrue(guild_pool.welcome_is_v2)
+
+    async def test_a_replaced_welcome_is_not_replaced_again(self):
+        cog = await self.run_pass()
+        await DiscordGuildPool.objects.filter(pk=self.guild_pool.pk).aupdate(welcome_is_v2=False)
+        cog.welcomes.clear()
+
+        await self.run_pass(cog)
+        await self.run_pass(cog)
+
+        self.assertEqual(len(self.discord_channel.sends), 3)
 
     async def test_a_deleted_welcome_is_not_reposted(self):
         """Deleting it is a choice; reposting would ping the role again for a

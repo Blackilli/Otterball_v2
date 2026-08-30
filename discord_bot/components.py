@@ -148,6 +148,61 @@ def score_line(score: int | str, widest: int) -> str:
     return f"# {pad}{score}"
 
 
+class WelcomeView(ui.LayoutView):
+    """The season opener, as one card the pool's own settings fill in.
+
+    Components V2 rather than an embed for one reason that is not cosmetic: a
+    V2 message can carry a button, so the notification opt-out sits in the
+    welcome itself instead of only on a reminder nobody sees until they are
+    already being pinged - and the poll channel is read-only, so this is the
+    one message a player can act on.
+
+    Takes finished strings, like MatchStatusView: the cog owns the wording and
+    reads every value off PoolConfiguration, this owns the layout.
+    """
+
+    def __init__(
+        self,
+        *,
+        heading: str,
+        subheading: str,
+        steps: "Sequence[tuple[str, str]]",
+        footer: str,
+        mention: str | None = None,
+        settings_pool_id: int | None = None,
+        settings_step: int | None = None,
+    ):
+        # No timeout, for the same reason MatchStatusView has none: the message
+        # outlives any view instance and the button is dispatched by its
+        # dynamic template.
+        super().__init__(timeout=None)
+
+        container = ui.Container(accent_colour=discord.Color.blurple())
+        container.add_item(ui.TextDisplay(heading))
+        if mention:
+            # A mention inside a V2 component still notifies, subject to the
+            # AllowedMentions the cog passes - which is how this post reaches
+            # the role at all now that it has no `content`.
+            container.add_item(ui.TextDisplay(mention))
+        container.add_item(ui.TextDisplay(subheading))
+        container.add_item(ui.Separator())
+
+        for index, (title, body) in enumerate(steps):
+            text = ui.TextDisplay(f"**{title}**\n{body}")
+            if settings_pool_id is not None and index == settings_step:
+                # Beside the step that explains the ping, so the control and
+                # what it controls are one thing to read.
+                container.add_item(
+                    ui.Section(text, accessory=NotificationSettingsButton(settings_pool_id)),
+                )
+            else:
+                container.add_item(text)
+
+        container.add_item(ui.Separator())
+        container.add_item(ui.TextDisplay(f"-# {footer}"))
+        self.add_item(container)
+
+
 @dataclass(frozen=True)
 class InteractiveComponent:
     """One clickable thing the bot puts in a channel, and what it does.

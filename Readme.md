@@ -15,6 +15,7 @@ Predictions are made in Discord and nowhere else: the bot posts a native poll pe
 - **Backup & Restore:** `export_db` / `import_db` management commands bundle the full database *and* the media files into one compressed archive and restore it cleanly, skipping derived/ephemeral tables (contenttypes, sessions, admin logs, Celery task results). The database half uses natural keys, so it restores into an empty database on another server without renumbering anything that matters.
 - **Multi-Sport Ingestion:** Soccer comes from the FIFA API; the NFL is deliberately dual-sourced from ESPN (schedule plus live scores) and nflverse (an independent backstop for final results, cross-referenced by ESPN event id). Every provider id lives in its own mapping table, so ingestion is idempotent and a new provider needs no changes to the core models.
 - **Public Web Pages:** Read-only and season-scoped — upcoming fixtures, the knockout bracket, pool standings, and a stats page whose rank-over-time chart is server-rendered SVG (complete with JavaScript off). The standings read the very same ranking code as the bot's pinned message, so the site and Discord cannot disagree about who is second.
+- **Season Opener:** One Components V2 card per pool, posted by the bot when a pool is bound to a channel: the three steps of playing, what each round is worth, links to the season on the web, and the notification opt-out as a button on the card itself. It is edited in place as the pool's settings change, so correcting the points never pings the role twice.
 - **Guided Pool Setup:** `manage.py create_pool` / `check_pool`, or the admin's *Start a new pool* page, which ends in the same readiness report — because almost every way a pool can be misconfigured is otherwise silent.
 - **Message Previews:** *Preview messages* on a pool's admin page posts a chosen fixture's poll, reminder, live score and full-time result into its channel so you can see a match night before one happens. They are built by the code that runs the real thing, ping nobody, score nothing, and are deleted again from the same page. A *Buttons & modals* message posts every clickable component as the live one, which is also the only way to open a modal — Discord opens those from an interaction and never on their own.
 - **Modern Deployment:** Fast Docker builds leveraging the modern `uv` package manager and BuildKit caching.
@@ -65,6 +66,11 @@ DJANGO_SECRET_KEY='your-secret-key-containing-#-or-$'
 # and Django answers 400 for a host it was not told to allow.
 ALLOWED_HOSTS=your-domain.com,127.0.0.1
 TZ=Europe/Berlin
+
+# Where the public pages are reachable from outside. The bot links each pool's
+# season - fixtures, leaderboard, stats - from its welcome post, and a Discord
+# message has no request to build an absolute URL from.
+PUBLIC_SITE_URL=https://your-domain.com
 
 # Host/container port the web service listens on and is published under
 # (gunicorn binds it, the healthcheck probes it, compose publishes it).
