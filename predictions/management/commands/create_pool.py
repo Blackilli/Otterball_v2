@@ -73,6 +73,11 @@ class Command(BaseCommand):
         discord.add_argument("--guild", type=int, default=None, help="Discord guild (server) id")
         discord.add_argument("--channel", type=int, default=None, help="Discord channel id for polls + leaderboard")
         discord.add_argument("--notification-role", type=int, default=None, help="Role id to ping on new polls")
+        discord.add_argument(
+            "--no-welcome",
+            action="store_true",
+            help="Do not let the bot post the welcome message for this binding (it posts one by default)",
+        )
 
     # -- resolution helpers ------------------------------------------------
 
@@ -248,6 +253,8 @@ class Command(BaseCommand):
             defaults["channel"] = channel
         if options["notification_role"]:
             defaults["notification_role"] = role
+        if options["no_welcome"]:
+            defaults["announce_welcome"] = False
 
         guild_pool, created = DiscordGuildPool.objects.update_or_create(
             guild=guild,
@@ -261,3 +268,7 @@ class Command(BaseCommand):
 
         if not guild_pool.channel:
             self.stdout.write(self.style.WARNING("  no channel set: polls and the leaderboard have nowhere to post"))
+        elif not guild_pool.welcome_msg and guild_pool.announce_welcome:
+            # This process cannot post it - the bot is a different container -
+            # so say who will, or the silence reads as a failed binding.
+            self.stdout.write("  the running bot posts the welcome message and the leaderboard within a minute")

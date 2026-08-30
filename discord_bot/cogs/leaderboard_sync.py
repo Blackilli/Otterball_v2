@@ -22,38 +22,12 @@ class LeaderboardSyncCog(commands.Cog):
     def cog_unload(self) -> None:
         self.leaderboard_sync_loop.cancel()
 
-    @commands.Cog.listener()
-    async def on_ready(self):
-        async for db_guild_pool in DiscordGuildPool.objects.filter(is_active=True).select_related(
-            "pool", "pool__season"
-        ):
-            if db_guild_pool.leaderboard_msg:
-                await self.update_leaderboard_msg(db_guild_pool)
-                continue
-            try:
-                guild = self.bot.get_guild(db_guild_pool.guild_id) or await self.bot.fetch_guild(
-                    db_guild_pool.guild_id
-                )
-                channel = self.bot.get_channel(db_guild_pool.channel_id) or await guild.fetch_channel(
-                    db_guild_pool.channel_id
-                )
-            except discord.NotFound:
-                logger.warning(
-                    f"Guild {db_guild_pool.guild_id} or Channel {db_guild_pool.channel_id} not found during initialization."
-                )
-                continue
-
-            if not isinstance(channel, discord.abc.Messageable):
-                continue
-
-            msg = await channel.send("Leaderboard\n-# soon™")
-            if msg:
-                logger.info(f"Leaderboard message sent: {msg.id}")
-                db_guild_pool.leaderboard_msg = msg.id
-                await db_guild_pool.asave()
-                await msg.pin()
-
     async def update_leaderboard_msg(self, guild_pool: DiscordGuildPool, force: bool = False):
+        """Render into the pool's pinned message; never create it.
+
+        PoolOnboardingCog owns creating it, so that the welcome post and the
+        leaderboard cannot land in a new channel in the wrong order.
+        """
         if not guild_pool.leaderboard_msg:
             return
 
@@ -217,3 +191,9 @@ class LeaderboardSyncCog(commands.Cog):
                 )
             except Exception as e:
                 logger.error(f"Failed background database sync loop for GuildPool {db_guild_pool.id}: {e}")
+
+    @leaderboard_sync_loop.before_loop
+    async def before_leaderboard_sync_loop(self):
+        # The loop starts in __init__, i.e. before login: fetch_guild would
+        # fail on the first pass and the pools would go a full 30s unrendered.
+        await self.bot.wait_until_ready()

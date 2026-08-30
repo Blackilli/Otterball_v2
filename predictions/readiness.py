@@ -292,8 +292,20 @@ def _check_discord_binding(pool: PredictionPool) -> list[Check]:
             continue
 
         role = f", pings @{binding.notification_role.name}" if binding.notification_role else ", no ping role"
-        pinned = "leaderboard posted" if binding.leaderboard_msg else "leaderboard not posted yet"
-        checks.append(Check(OK, f"bound to {binding.guild.name} #{binding.channel.name}", f"{pinned}{role}"))
+        # PoolOnboardingCog posts both within a minute of the binding existing,
+        # so "not posted yet" on a fresh pool is a wait, not a fault - which is
+        # why neither is a WARN.
+        if binding.welcome_msg:
+            welcome = "welcome posted"
+        else:
+            welcome = "welcome pending" if binding.announce_welcome else "welcome off"
+        posted = [
+            welcome,
+            "leaderboard posted" if binding.leaderboard_msg else "leaderboard pending",
+        ]
+        checks.append(
+            Check(OK, f"bound to {binding.guild.name} #{binding.channel.name}", f"{', '.join(posted)}{role}")
+        )
     return checks
 
 

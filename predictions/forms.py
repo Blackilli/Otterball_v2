@@ -128,6 +128,16 @@ class PoolSetupForm(forms.Form):
         required=False,
         help_text="Pinged when a new batch of polls is posted. Its members are also who the reminder counts.",
     )
+    announce_welcome = forms.BooleanField(
+        required=False,
+        initial=True,
+        label="Announce the new season",
+        help_text=(
+            "The bot posts one message introducing the pool - schedule, points per round, how to vote - "
+            "and pings the notification role. It is edited in place afterwards, so setting the points "
+            "later corrects it without a second ping."
+        ),
+    )
 
     class Media:
         # Wrapped in DOMContentLoaded on its own, because form media renders
@@ -149,7 +159,7 @@ class PoolSetupForm(forms.Form):
             "Where it posts",
             "Optional - a pool with no binding is created fine and simply never posts, so you can come "
             "back and bind it once the bot has seen your server.",
-            ("guild", "channel", "notification_role"),
+            ("guild", "channel", "notification_role", "announce_welcome"),
         ),
     )
 

@@ -14,6 +14,7 @@ from discord_bot.cogs.guild_sync import GuildSyncCog
 from discord_bot.cogs.leaderboard_sync import LeaderboardSyncCog
 from discord_bot.cogs.match_ticker import MatchTickerCog
 from discord_bot.cogs.poll_creation import matches_needing_polls
+from discord_bot.cogs.pool_onboarding import LEADERBOARD_PLACEHOLDER, PoolOnboardingCog
 from discord_bot.cogs.reconciliation import ReconciliationCog
 from discord_bot.cogs.remove_garbage import RemoveGarbageCog
 from discord_bot.cogs.role_sync import RoleSyncCog
@@ -30,7 +31,13 @@ from discord_bot.models import (
     PoolNotificationPreference,
 )
 from discord_bot.services import aget_or_create_profile, aset_missing_vote_reminders
-from predictions.models import DEFAULT_REMINDER_LEAD_MINUTES, PoolConfiguration, Prediction, PredictionPool
+from predictions.models import (
+    DEFAULT_REMINDER_LEAD_MINUTES,
+    PoolConfiguration,
+    PoolStageRule,
+    Prediction,
+    PredictionPool,
+)
 from sports.models import Competition, Match, MatchOutcome, MatchStatus, Season, Stage, StageType, Team
 
 User = get_user_model()
@@ -112,6 +119,10 @@ class FakeRole:
         self.name = name
         self.position = position
         self.members = members or []
+
+    @property
+    def mention(self):
+        return f"<@&{self.id}>"
 
 
 class FakeMember:
@@ -1755,3 +1766,207 @@ class ReconciliationQueryCountTests(TestCase):
 
         self.assertEqual(len(self.deactivations(queries)), 1)
         self.assertEqual(DiscordGuildRole.objects.count(), 5)
+
+
+class FakePostedMessage:
+    """A message the bot has just sent: editable, pinnable, identifiable."""
+
+    def __init__(self, message_id, content=""):
+        self.id = message_id
+        self.content = content
+        self.pinned = False
+        self.edits = []
+
+    async def pin(self):
+        self.pinned = True
+
+    async def edit(self, **kwargs):
+        self.edits.append(kwargs)
+
+
+class FakeOnboardingChannel(discord.abc.Messageable):
+    """Records every send, and hands sent messages back to fetch_message."""
+
+    def __init__(self, channel_id=10):
+        self.id = channel_id
+        self.sends = []
+        self.messages = {}
+        self._next_id = 5000
+
+    async def _get_channel(self):
+        return self
+
+    async def send(self, content=None, **kwargs):
+        self._next_id += 1
+        message = FakePostedMessage(self._next_id, content or "")
+        self.messages[message.id] = message
+        self.sends.append({"content": content, "message": message, **kwargs})
+        return message
+
+    async def fetch_message(self, message_id):
+        if message_id not in self.messages:
+            raise discord.NotFound(FakeResponse(), "unknown message")
+        return self.messages[message_id]
+
+
+class FakeResponse:
+    """Enough of an aiohttp response for discord.NotFound to be constructible."""
+
+    status = 404
+    reason = "Not Found"
+
+
+class PoolOnboardingTests(TestCase):
+    """The season opener and the leaderboard message the bot posts for a pool
+    it has just been bound to.
+
+    Both exist because standing a pool up happens in the admin or a management
+    command, i.e. in a container that cannot talk to Discord at all.
+    """
+
+    def setUp(self):
+        self.competition = Competition.objects.create(name="NFL")
+        self.season = Season.objects.create(name="NFL 2026", competition=self.competition, year=2026)
+        self.regular = Stage.objects.create(
+            season=self.season, name="Regular Season", stage_type=StageType.LEAGUE, level=0
+        )
+        self.final = Stage.objects.create(
+            season=self.season, name="Super Bowl", stage_type=StageType.KNOCK_OUT, level=4
+        )
+        self.pool = PredictionPool.objects.create(name="NFL 2026 Pool", season=self.season)
+        PoolConfiguration.objects.update_or_create(
+            pool=self.pool,
+            defaults={
+                "poll_creation_weekdays": [2],
+                "poll_creation_time": datetime.time(18, 0),
+                "poll_creation_lookahead_days": 7,
+                "reminder_lead_minutes": 60,
+            },
+        )
+        PoolStageRule.objects.create(pool=self.pool, stage=self.regular, level=0, points_per_correct=1)
+        PoolStageRule.objects.create(pool=self.pool, stage=self.final, level=4, points_per_correct=5)
+
+        self.guild = DiscordGuild.objects.create(id=1, name="Test Guild")
+        self.channel = DiscordChannel.objects.create(id=10, guild=self.guild, name="pool", channel_type="text")
+        self.role = DiscordGuildRole.objects.create(id=77, guild=self.guild, name="NFL Pool")
+        self.guild_pool = DiscordGuildPool.objects.create(
+            guild=self.guild,
+            pool=self.pool,
+            channel=self.channel,
+            notification_role=self.role,
+            is_active=True,
+        )
+        self.discord_channel = FakeOnboardingChannel(channel_id=self.channel.id)
+        self.discord_role = FakeRole(self.role.id, self.role.name)
+
+    def make_cog(self):
+        bot = FakeBot(
+            channel=self.discord_channel,
+            guilds=[FakeGuild(self.guild.id, "Test Guild", roles=[self.discord_role])],
+        )
+        cog = PoolOnboardingCog(bot=bot)
+        cog.cog_unload()  # the loop has nothing to do with a single pass
+        return cog
+
+    async def run_pass(self, cog=None):
+        cog = cog or self.make_cog()
+        guild_pool = await DiscordGuildPool.objects.select_related(
+            "pool", "pool__season", "pool__configuration"
+        ).aget(pk=self.guild_pool.pk)
+        await cog.onboard(guild_pool)
+        return cog
+
+    async def test_a_new_binding_gets_a_welcome_then_a_leaderboard(self):
+        await self.run_pass()
+
+        contents = [send["content"] for send in self.discord_channel.sends]
+        self.assertEqual(len(contents), 2)
+        self.assertIn("Welcome to NFL 2026 Pool", contents[0])
+        # Order matters: the welcome introduces the leaderboard below it.
+        self.assertEqual(contents[1], LEADERBOARD_PLACEHOLDER)
+
+        guild_pool = await DiscordGuildPool.objects.aget(pk=self.guild_pool.pk)
+        self.assertEqual(guild_pool.welcome_msg, self.discord_channel.sends[0]["message"].id)
+        self.assertEqual(guild_pool.leaderboard_msg, self.discord_channel.sends[1]["message"].id)
+
+    async def test_only_the_leaderboard_is_pinned(self):
+        """Pins are capped at 50 a channel and the polls need them; the
+        welcome post is delivered by its role ping instead."""
+        await self.run_pass()
+
+        welcome, leaderboard = (send["message"] for send in self.discord_channel.sends)
+        self.assertFalse(welcome.pinned)
+        self.assertTrue(leaderboard.pinned)
+
+    async def test_the_welcome_pings_the_notification_role(self):
+        await self.run_pass()
+
+        send = self.discord_channel.sends[0]
+        self.assertIn(self.discord_role.mention, send["content"])
+        self.assertTrue(send["allowed_mentions"].roles)
+        self.assertFalse(send["allowed_mentions"].everyone)
+
+    async def test_the_welcome_states_the_schedule_and_the_points(self):
+        await self.run_pass()
+
+        embed = self.discord_channel.sends[0]["embed"]
+        values = {field.name: field.value for field in embed.fields}
+        self.assertIn("Wednesday", values["🗳️ When polls appear"])
+        self.assertIn("18:00", values["🗳️ When polls appear"])
+        self.assertIn("**Regular Season** — 1 point(s) per correct pick", values["🏆 What a pick is worth"])
+        self.assertIn("**Super Bowl** — 5 point(s) per correct pick", values["🏆 What a pick is worth"])
+        self.assertIn("60 minutes", values["⏰ Reminders"])
+
+    async def test_a_second_pass_posts_nothing(self):
+        cog = await self.run_pass()
+        await self.run_pass(cog)
+
+        self.assertEqual(len(self.discord_channel.sends), 2)
+
+    async def test_changed_points_edit_the_welcome_rather_than_repost_it(self):
+        """A pool is created before its points per round are set, so the first
+        render is the flat default. An edit corrects it without pinging again."""
+        cog = await self.run_pass()
+
+        await PoolStageRule.objects.filter(pool=self.pool, stage=self.final).aupdate(points_per_correct=9)
+        await self.run_pass(cog)
+
+        self.assertEqual(len(self.discord_channel.sends), 2)
+        welcome = self.discord_channel.sends[0]["message"]
+        self.assertEqual(len(welcome.edits), 1)
+        embed = welcome.edits[0]["embed"]
+        values = {field.name: field.value for field in embed.fields}
+        self.assertIn("**Super Bowl** — 9 point(s) per correct pick", values["🏆 What a pick is worth"])
+
+    async def test_the_flag_is_off_and_only_the_leaderboard_is_posted(self):
+        """Every binding that predates this cog has the flag off, so a deploy
+        cannot welcome a pool halfway through its season."""
+        await DiscordGuildPool.objects.filter(pk=self.guild_pool.pk).aupdate(announce_welcome=False)
+
+        await self.run_pass()
+
+        contents = [send["content"] for send in self.discord_channel.sends]
+        self.assertEqual(contents, [LEADERBOARD_PLACEHOLDER])
+
+    async def test_a_deleted_welcome_is_not_reposted(self):
+        """Deleting it is a choice; reposting would ping the role again for a
+        season already under way."""
+        cog = await self.run_pass()
+        self.discord_channel.messages.pop(self.discord_channel.sends[0]["message"].id)
+
+        await PoolStageRule.objects.filter(pool=self.pool, stage=self.final).aupdate(points_per_correct=9)
+        await self.run_pass(cog)
+
+        self.assertEqual(len(self.discord_channel.sends), 2)
+
+    async def test_the_leaderboard_cog_does_not_create_the_message(self):
+        """It renders into a message that exists and nothing more, so the two
+        posts cannot race into a new channel in the wrong order."""
+        bot = FakeBot(channel=self.discord_channel, guilds=[FakeGuild(self.guild.id, "Test Guild")])
+        cog = LeaderboardSyncCog(bot=bot)
+        cog.cog_unload()
+
+        guild_pool = await DiscordGuildPool.objects.select_related("pool").aget(pk=self.guild_pool.pk)
+        await cog.update_leaderboard_msg(guild_pool)
+
+        self.assertEqual(self.discord_channel.sends, [])
