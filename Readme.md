@@ -52,6 +52,8 @@ Create a `.env` file in your deployment directory.
 # Django Settings
 ENV=production
 DJANGO_SECRET_KEY='your-secret-key-containing-#-or-$'
+# Must keep 127.0.0.1: the web container's healthcheck probes /health/ over it,
+# and Django answers 400 for a host it was not told to allow.
 ALLOWED_HOSTS=your-domain.com,127.0.0.1
 TZ=Europe/Berlin
 
@@ -128,14 +130,28 @@ regenerates a token on *Reset Token*, and rotating `DJANGO_SECRET_KEY` only
 invalidates existing sessions.
 
 ### 3. Create the Directories & `compose.yml`
-Before launching the containers, create the host directory for persistent assets like team logos:
+Everything that has to survive a `compose pull` is a bind mount, so all of it is
+visible on the host — backed up with `tar`/`rsync`, and readable by an Nginx that
+never enters a container:
+
 ```bash
-mkdir -p media
+mkdir -p media static pgdata
 ```
+
+| Directory | Holds | Why a host folder |
+|---|---|---|
+| `media/` | Team crests, written by the worker | Nginx serves it directly (step 4), and it is the half `export_db` cannot reconstruct |
+| `static/` | `collectstatic` output | Nginx can serve it without whitenoise, and you can inspect what was collected |
+| `pgdata/` | The Postgres cluster | A file-level backup is `tar czf` on a stopped `db`, no `pg_dump` needed |
 
 The containers start as root purely so their entrypoint can remap their internal
 user to `PUID`/`PGID`, then drop to it via `gosu` — so with `PUID`/`PGID` set to
-your own ids, everything the worker downloads into `./media` stays owned by you.
+your own ids, everything the worker downloads into `./media` and everything
+`collectstatic` writes into `./static` stays owned by you. Leave them unset and
+the entrypoint chowns both directories to its built-in `8888:8888` instead, which
+is exactly the root-owned-backup annoyance the bind mounts are meant to avoid.
+`pgdata/` is the exception either way: the Postgres image runs as its own
+`postgres` user and chowns that directory itself, so leave it out of `PUID`.
 
 Create a `compose.yml` file next to your `.env` pointing to the official GHCR image:
 
@@ -160,14 +176,16 @@ services:
       - "127.0.0.1:${WEB_PORT:-8000}:${WEB_PORT:-8000}"
     volumes:
       - ./media:/app/media
-      - django_static:/app/static
+      - ./static:/app/static
     depends_on:
       db:
         condition: service_healthy
       valkey:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:$${WEB_PORT:-8000}/health/"]
+      # 127.0.0.1 rather than localhost: /health/ goes through ALLOWED_HOSTS,
+      # which the .env above allows by ip.
+      test: ["CMD-SHELL", "curl -f http://127.0.0.1:$${WEB_PORT:-8000}/health/"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -240,7 +258,7 @@ services:
     # /var/lib/postgresql as its volume — mount that, NOT the /data subdirectory
     # older guides use, or every `compose up` after a `pull` starts empty.
     volumes:
-      - postgres_data:/var/lib/postgresql
+      - ./pgdata:/var/lib/postgresql
     # Uncomment to reach the database from the host; not needed by the cluster,
     # which always talks to it on 5432 over the compose network.
     # ports:
@@ -260,27 +278,38 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
-
-volumes:
-  postgres_data:
-  django_static:
 ```
 
 *Note: `depends_on` uses `condition: service_healthy` throughout, so nothing
-starts against a Postgres still running initdb. If you are upgrading an existing
-deployment that mounted `postgres_data:/var/lib/postgresql/data`, take an
-`export_db` bundle first — that path never held the Postgres 18 cluster, so the
-data you want is in the anonymous volume the old container created.*
+starts against a Postgres still running initdb.*
+
+*⚠️ Migrating an existing deployment: if your `db` mounted
+`postgres_data:/var/lib/postgresql/data` — the path older guides use — that
+directory never held the Postgres 18 cluster, so the live data is in the
+anonymous volume the container created for `/var/lib/postgresql`. Take an
+`export_db` bundle **before** switching to `./pgdata`, then `import_db --flush`
+into the new one; pointing the mount at an empty `./pgdata` starts an empty
+database and initdb will happily populate it.*
 
 ### 4. Configure Production Nginx
-For maximum performance, configure the host's Nginx proxy to bypass Django and serve the persistent `media/` folder (team logos) directly:
+Both asset folders are host directories, so Nginx can serve them without going
+through Django at all:
 
 ```nginx
 location /media/ {
-    alias /path/to/your/Otterball_v2/media/;
+    alias /path/to/your/deployment/media/;
+    expires 30d;
+}
+
+location /static/ {
+    alias /path/to/your/deployment/static/;
     expires 30d;
 }
 ```
+
+Whitenoise inside the container serves `/static/` too, so this is a performance
+choice rather than a requirement — but it is also what lets you point any other
+tool at the collected assets.
 
 Everything else proxies to `WEB_PORT`, so if you change that value, change it here too:
 
@@ -380,6 +409,21 @@ uv run python manage.py export_db                           # bundle DB + media 
 uv run python manage.py export_db dump.json.gz --no-media   # database only, as a plain fixture
 uv run python manage.py import_db backups/otterball_xxx.tar.gz --flush   # restore, wiping existing rows first
 ```
+
+`export_db` is the portable option: it uses natural keys, so a bundle restores
+into an empty database on another machine and across a Postgres major version.
+With the production layout above there is also the file-level route — stop `db`
+first, or the copy is a torn cluster:
+
+```bash
+sudo docker compose stop db
+sudo tar czf pgdata-$(date +%F).tar.gz pgdata/ media/
+sudo docker compose start db
+```
+
+That one is byte-identical and fast, but it only restores into the same Postgres
+major version. `static/` needs no backup at all — `collectstatic` rebuilds it on
+every start.
 
 ---
 

@@ -86,7 +86,7 @@ services:
         condition: service_healthy
     networks: [otterball_network]
     healthcheck:
-      test: [CMD-SHELL, 'curl -f http://localhost:$${WEB_PORT:-8000}/health/']
+      test: [CMD-SHELL, 'curl -f http://127.0.0.1:$${WEB_PORT:-8000}/health/']
       interval: 10s
       timeout: 5s
       retries: 3
