@@ -1,9 +1,12 @@
+import importlib.util
+import os
 import tempfile
 from io import StringIO
 from pathlib import Path
+from unittest import mock
 
 from django.core.management import call_command
-from django.test import Client, TestCase, override_settings
+from django.test import Client, SimpleTestCase, TestCase, override_settings
 
 
 class PendingMigrationsTests(TestCase):
@@ -95,3 +98,58 @@ class MediaServingTests(TestCase):
                 response = Client().get("/static/site.css")
 
         self.assertEqual(response.status_code, 200)
+
+
+class EnvironmentFallbackTests(SimpleTestCase):
+    """A variable declared in .env but left empty must not beat its default.
+
+    compose passes every name in a service's environment block through, so
+    `CELERY_RESULT_BACKEND=` in .env arrives as an empty string rather than as
+    absent - and `os.getenv(name, default)` returns the empty string, which is
+    how the worker came up with no result backend at all. Readiness reads the
+    newest TaskResult to tell a *failing* scheduled task from one that merely
+    has not run, so that silently cost a signal.
+    """
+
+    def load_settings(self, **environ):
+        """Import a fresh copy of the settings module under its own name.
+
+        Not importlib.reload: that would rebind the module django.conf.settings
+        is holding, for the rest of the suite.
+        """
+        path = Path(__file__).resolve().parent / "settings.py"
+        spec = importlib.util.spec_from_file_location("otterball_v2._settings_under_test", path)
+        module = importlib.util.module_from_spec(spec)
+        with mock.patch.dict(os.environ, environ):
+            spec.loader.exec_module(module)
+        return module
+
+    def test_empty_variables_fall_back_to_their_defaults(self):
+        loaded = self.load_settings(
+            DJANGO_SECRET_KEY="",
+            ALLOWED_HOSTS="",
+            REDIS_URL="",
+            CELERY_BROKER_URL="",
+            CELERY_RESULT_BACKEND="",
+            TZ="",
+        )
+
+        self.assertTrue(loaded.SECRET_KEY)
+        self.assertEqual(loaded.ALLOWED_HOSTS, ["*"])
+        self.assertEqual(loaded.REDIS_URL, "redis://127.0.0.1:6379/1")
+        self.assertEqual(loaded.CELERY_BROKER_URL, loaded.REDIS_URL)
+        self.assertEqual(loaded.CELERY_RESULT_BACKEND, "django-db")
+        self.assertEqual(loaded.TIME_ZONE, "Europe/Berlin")
+
+    def test_a_set_variable_still_wins(self):
+        loaded = self.load_settings(
+            ALLOWED_HOSTS="example.com,127.0.0.1",
+            REDIS_URL="redis://valkey:6379/0",
+            CELERY_RESULT_BACKEND="rpc://",
+            TZ="UTC",
+        )
+
+        self.assertEqual(loaded.ALLOWED_HOSTS, ["example.com", "127.0.0.1"])
+        self.assertEqual(loaded.CELERY_BROKER_URL, "redis://valkey:6379/0")
+        self.assertEqual(loaded.CELERY_RESULT_BACKEND, "rpc://")
+        self.assertEqual(loaded.TIME_ZONE, "UTC")

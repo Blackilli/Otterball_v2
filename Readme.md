@@ -43,6 +43,14 @@ the apt repository and installs both. With that repository already configured:
 sudo apt-get update && sudo apt-get install -y docker-ce docker-compose-plugin
 ```
 
+Valkey also asks the host for memory overcommit; without it a background save can
+fail under memory pressure, and it says so in the log on every boot:
+
+```bash
+echo 'vm.overcommit_memory = 1' | sudo tee /etc/sysctl.d/99-valkey.conf
+sudo sysctl vm.overcommit_memory=1
+```
+
 ### 2. Setup Environment Variables (`.env`)
 Create a `.env` file in your deployment directory.
 

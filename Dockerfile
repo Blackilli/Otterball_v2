@@ -38,6 +38,13 @@ RUN uv sync --frozen --no-dev
 
 ENV PATH="/app/.venv/bin:$PATH"
 
+# `uv run` re-syncs the project against pyproject.toml before running, and its
+# default group set includes dev - so every container start re-downloaded
+# basedpyright, pyrefly, black and a node toolchain into the image's --no-dev
+# venv, four containers at once, into the same /app/.venv. The image is already
+# synced at build time; nothing at runtime should be resolving dependencies.
+ENV UV_NO_SYNC=1
+
 # The container starts as root only so docker-entrypoint.sh can remap appuser to
 # PUID/PGID; it drops to that user via gosu before running anything.
 ENV PUID=8888 \

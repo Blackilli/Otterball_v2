@@ -2,6 +2,7 @@ import datetime
 from unittest.mock import patch
 
 from django.core.cache import cache
+from django.db import OperationalError, ProgrammingError
 from django.test import TestCase, override_settings
 from django.utils import timezone
 from django_celery_beat.models import IntervalSchedule, PeriodicTask
@@ -145,3 +146,30 @@ class IngestionCatchupTests(TestCase):
             dispatched, _ = self.dispatch()
 
         self.assertEqual(dispatched, ["sports.tasks.sync_nfl_infrastructure"])
+
+    def test_an_unmigrated_database_is_not_a_traceback(self):
+        """A worker can win the race against the `web` container's migrate on a
+        fresh deploy. The tables are simply not there yet, Beat's next tick
+        covers it, and the log should say so in one line."""
+        self.schedule("sports.tasks.sync_nfl_infrastructure")
+
+        with patch(
+            "sports.catchup.overdue_tasks",
+            side_effect=ProgrammingError('relation "predictions_predictionpool" does not exist'),
+        ):
+            with self.assertLogs("sports.catchup", level="WARNING") as logs:
+                dispatched, sent = self.dispatch()
+
+        self.assertEqual(dispatched, [])
+        self.assertEqual(sent, [])
+        self.assertIn("database is not ready", logs.output[0])
+
+    def test_the_lock_is_not_taken_when_the_database_is_unavailable(self):
+        """Nothing was dispatched, so the next worker to start - by which time
+        migrate has probably finished - must still be free to run the round."""
+        self.schedule("sports.tasks.sync_nfl_infrastructure")
+
+        with patch("sports.catchup.overdue_tasks", side_effect=OperationalError("connection refused")):
+            self.dispatch()
+
+        self.assertIsNone(cache.get(LOCK_KEY))
