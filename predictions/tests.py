@@ -26,6 +26,9 @@ from discord_bot.models import (
     DiscordGuildPool,
     DiscordGuildRole,
     DiscordTeamEmoji,
+    MessagePreviewRequest,
+    PreviewMessageKind,
+    PreviewStatus,
 )
 from predictions.admin import PredictionPoolAdmin
 from predictions.closeout import close_out_pool, plan_closeout
@@ -1962,6 +1965,145 @@ class PoolCloseoutAdminViewTests(TestCase):
         self.pool.refresh_from_db()
         self.assertIn(response.status_code, (302, 403))
         self.assertTrue(self.pool.is_active)
+
+    def test_the_button_is_on_the_pool_page(self):
+        response = self.client.get(reverse("admin:predictions_predictionpool_change", args=[self.pool.pk]))
+
+        self.assertContains(response, self.url)
+
+
+class MessagePreviewAdminViewTests(TestCase):
+    """Queueing a set of test messages for a pool, and taking them back down.
+
+    The page cannot post anything itself - the web container has no Discord
+    connection - so everything it does is write a row the bot reads.
+    """
+
+    def setUp(self):
+        self.competition = Competition.objects.create(name="NFL", sport=Sport.AMERICAN_FOOTBALL)
+        self.season = Season.objects.create(name="NFL 2026", competition=self.competition, year=2026)
+        self.stage = Stage.objects.create(
+            season=self.season, name="Regular Season", stage_type=StageType.LEAGUE, level=0
+        )
+        self.pool = PredictionPool.objects.create(name="NFL Pool", season=self.season)
+        self.guild = DiscordGuild.objects.create(id=1, name="Test Guild")
+        self.channel = DiscordChannel.objects.create(id=10, guild=self.guild, name="pool", channel_type="text")
+        self.guild_pool = DiscordGuildPool.objects.create(
+            guild=self.guild, pool=self.pool, channel=self.channel, is_active=True
+        )
+        self.played = Match.objects.create(
+            stage=self.stage,
+            home_team=Team.objects.create(name="Chiefs"),
+            away_team=Team.objects.create(name="Eagles"),
+            kickoff=timezone.now() - datetime.timedelta(days=2),
+            status=MatchStatus.FINISHED,
+            home_score=21,
+            away_score=17,
+        )
+        self.upcoming = Match.objects.create(
+            stage=self.stage,
+            home_team=Team.objects.create(name="Bills"),
+            away_team=Team.objects.create(name="Jets"),
+            kickoff=timezone.now() + datetime.timedelta(days=3),
+        )
+
+        self.admin_user = User.objects.create_superuser(username="previewer", password="preview-pass")
+        self.client.force_login(self.admin_user)
+        self.url = reverse("admin:predictions_predictionpool_preview", args=[self.pool.pk])
+
+    def test_the_page_offers_this_pool_only(self):
+        other_pool = PredictionPool.objects.create(name="Other", season=self.season)
+        other_binding = DiscordGuildPool.objects.create(
+            guild=self.guild, pool=other_pool, channel=self.channel, is_active=True
+        )
+
+        response = self.client.get(self.url)
+
+        self.assertEqual(response.status_code, 200)
+        bindings = response.context["form"].fields["guild_pool"].queryset
+        self.assertEqual([binding.pk for binding in bindings], [self.guild_pool.pk])
+        self.assertNotIn(other_binding, bindings)
+
+    def test_it_opens_on_the_next_match_to_be_played(self):
+        """Same rule the public front page uses: whatever is about to happen is
+        what someone is most likely to be checking."""
+        response = self.client.get(self.url)
+
+        self.assertEqual(response.context["form"].fields["match"].initial, self.upcoming)
+
+    def test_a_post_queues_the_messages_for_the_bot(self):
+        response = self.client.post(
+            self.url,
+            {
+                "guild_pool": self.guild_pool.pk,
+                "match": self.played.pk,
+                "kinds": [PreviewMessageKind.RESULT_POSTED, PreviewMessageKind.POLL],
+            },
+        )
+
+        self.assertRedirects(response, self.url)
+        preview = MessagePreviewRequest.objects.get()
+        self.assertEqual(preview.match, self.played)
+        self.assertEqual(preview.guild_pool, self.guild_pool)
+        self.assertEqual(preview.requested_by, self.admin_user)
+        self.assertEqual(preview.status, PreviewStatus.PENDING)
+        # Stored in the order the channel would see them, not the order the
+        # checkboxes came back in.
+        self.assertEqual(preview.kinds, [PreviewMessageKind.POLL, PreviewMessageKind.RESULT_POSTED])
+
+    def test_queueing_creates_no_active_match_message(self):
+        """That row is what makes the poll loop skip a match and the ticker
+        adopt a message - a preview must leave both alone."""
+        self.client.post(
+            self.url,
+            {"guild_pool": self.guild_pool.pk, "match": self.upcoming.pk, "kinds": [PreviewMessageKind.POLL]},
+        )
+
+        self.assertFalse(ActiveMatchMessage.objects.exists())
+
+    def test_removal_is_queued_rather_than_done_here(self):
+        preview = MessagePreviewRequest.objects.create(
+            guild_pool=self.guild_pool,
+            match=self.played,
+            kinds=[PreviewMessageKind.POLL],
+            status=PreviewStatus.POSTED,
+            posted_message_ids=[7001, 7002],
+        )
+
+        response = self.client.post(self.url, {"cleanup": preview.pk})
+
+        preview.refresh_from_db()
+        self.assertRedirects(response, self.url)
+        self.assertTrue(preview.cleanup_requested)
+        # Still recorded: only the bot can delete a Discord message, and it
+        # needs the ids to do it.
+        self.assertEqual(preview.posted_message_ids, [7001, 7002])
+
+    def test_another_pools_preview_cannot_be_removed_from_here(self):
+        other_pool = PredictionPool.objects.create(name="Other", season=self.season)
+        other_binding = DiscordGuildPool.objects.create(
+            guild=self.guild, pool=other_pool, channel=self.channel, is_active=True
+        )
+        preview = MessagePreviewRequest.objects.create(
+            guild_pool=other_binding, match=self.played, kinds=[PreviewMessageKind.POLL]
+        )
+
+        self.client.post(self.url, {"cleanup": preview.pk})
+
+        preview.refresh_from_db()
+        self.assertFalse(preview.cleanup_requested)
+
+    def test_a_reader_cannot_queue_anything(self):
+        reader = User.objects.create_user(username="reader", password="preview-pass", is_staff=True)
+        self.client.force_login(reader)
+
+        response = self.client.post(
+            self.url,
+            {"guild_pool": self.guild_pool.pk, "match": self.upcoming.pk, "kinds": [PreviewMessageKind.POLL]},
+        )
+
+        self.assertIn(response.status_code, (302, 403))
+        self.assertFalse(MessagePreviewRequest.objects.exists())
 
     def test_the_button_is_on_the_pool_page(self):
         response = self.client.get(reverse("admin:predictions_predictionpool_change", args=[self.pool.pk]))

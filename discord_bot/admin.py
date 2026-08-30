@@ -8,6 +8,7 @@ from discord_bot.models import (
     DiscordGuildRole,
     DiscordProfile,
     DiscordTeamEmoji,
+    MessagePreviewRequest,
     PoolNotificationPreference,
 )
 
@@ -103,3 +104,21 @@ class PoolNotificationPreferenceAdmin(admin.ModelAdmin):
     list_filter = ("pool", "notify_missing_votes")
     list_select_related = ("user", "pool")
     search_fields = ("user__username",)
+
+
+@admin.register(MessagePreviewRequest)
+class MessagePreviewRequestAdmin(admin.ModelAdmin):
+    """The test messages the pool's own "Preview messages" page queues.
+
+    Read-only here: a row is an order for the bot, and editing one after it has
+    been carried out only makes the record disagree with the channel. Queue and
+    remove them from the pool page instead.
+    """
+
+    list_display = ("created_at", "guild_pool", "match", "status", "cleanup_requested", "requested_by")
+    list_filter = ("status", "cleanup_requested", "guild_pool__pool")
+    list_select_related = ("guild_pool", "guild_pool__pool", "match", "requested_by")
+    readonly_fields = tuple(field.name for field in MessagePreviewRequest._meta.fields)
+
+    def has_add_permission(self, request) -> bool:
+        return False

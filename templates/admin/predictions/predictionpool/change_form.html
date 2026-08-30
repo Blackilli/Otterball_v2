@@ -8,6 +8,9 @@
     {% endcomment %}
     {% if original %}
         <li>
+            <a href="{% url 'admin:predictions_predictionpool_preview' original.pk %}">Preview messages</a>
+        </li>
+        <li>
             <a href="{% url 'admin:predictions_predictionpool_closeout' original.pk %}">Close out season</a>
         </li>
     {% endif %}

@@ -15,6 +15,7 @@ from discord_bot.cogs.emoji_sync import EmojiSyncCog
 from discord_bot.cogs.guild_sync import GuildSyncCog
 from discord_bot.cogs.leaderboard_sync import LeaderboardSyncCog
 from discord_bot.cogs.match_ticker import MatchTickerCog
+from discord_bot.cogs.message_preview import MessagePreviewCog
 from discord_bot.cogs.poll_creation import matches_needing_polls
 from discord_bot.cogs.pool_onboarding import (
     LEADERBOARD_PLACEHOLDER,
@@ -28,6 +29,7 @@ from discord_bot.cogs.role_sync import RoleSyncCog
 from discord_bot.components import (
     FIGURE_SPACE,
     HALF_DIGIT,
+    INTERACTIVE_COMPONENTS,
     NotificationSettingsButton,
     NotificationSettingsModal,
 )
@@ -40,7 +42,10 @@ from discord_bot.models import (
     DiscordGuildRole,
     DiscordProfile,
     MatchMessageState,
+    MessagePreviewRequest,
     PoolNotificationPreference,
+    PreviewMessageKind,
+    PreviewStatus,
 )
 from discord_bot.services import (
     aget_missing_vote_reminders,
@@ -179,6 +184,9 @@ class FakeBot:
 
     def get_cog(self, name):
         return self._cogs.get(name)
+
+    async def fetch_application_emojis(self):
+        return []
 
     def get_channel(self, channel_id):
         return self._channel
@@ -679,6 +687,11 @@ class RecordingChannel(discord.abc.Messageable):
         return FakePartialMessage(self, message_id)
 
     async def fetch_message(self, message_id):
+        if message_id not in self.messages:
+            raise discord.NotFound(_FakeResponse(), "unknown message")
+        return self.messages[message_id]
+
+    def get_partial_message(self, message_id):
         if message_id not in self.messages:
             raise discord.NotFound(_FakeResponse(), "unknown message")
         return self.messages[message_id]
@@ -1897,12 +1910,16 @@ class FakePostedMessage:
         self.content = content
         self.pinned = False
         self.edits = []
+        self.deleted = False
 
     async def pin(self):
         self.pinned = True
 
     async def edit(self, **kwargs):
         self.edits.append(kwargs)
+
+    async def delete(self):
+        self.deleted = True
 
 
 class FakeOnboardingChannel(discord.abc.Messageable):
@@ -1925,6 +1942,11 @@ class FakeOnboardingChannel(discord.abc.Messageable):
         return message
 
     async def fetch_message(self, message_id):
+        if message_id not in self.messages:
+            raise discord.NotFound(_FakeResponse(), "unknown message")
+        return self.messages[message_id]
+
+    def get_partial_message(self, message_id):
         if message_id not in self.messages:
             raise discord.NotFound(_FakeResponse(), "unknown message")
         return self.messages[message_id]
@@ -2375,3 +2397,195 @@ class RetireMatchMessagesCommandTests(TestCase):
         output = self.run_command("--season", str(self.season.id))
 
         self.assertIn("Nothing to retire", output)
+
+
+class MessagePreviewCogTests(TestCase):
+    """The bot half of the admin's "Preview messages" page.
+
+    The page can only write a row - the web container has no Discord
+    connection - so everything that actually reaches the channel happens here.
+    """
+
+    def setUp(self):
+        self.competition = Competition.objects.create(name="NFL")
+        self.season = Season.objects.create(name="NFL 2026", competition=self.competition, year=2026)
+        self.stage = Stage.objects.create(
+            season=self.season, name="Regular Season", stage_type=StageType.LEAGUE, level=0
+        )
+        self.pool = PredictionPool.objects.create(name="NFL 2026", season=self.season)
+        self.guild = DiscordGuild.objects.create(id=1, name="Test Guild")
+        self.channel = DiscordChannel.objects.create(id=10, guild=self.guild, name="pool", channel_type="text")
+        self.role = DiscordGuildRole.objects.create(id=77, guild=self.guild, name="Pickers")
+        self.guild_pool = DiscordGuildPool.objects.create(
+            guild=self.guild,
+            pool=self.pool,
+            channel=self.channel,
+            notification_role=self.role,
+            is_active=True,
+        )
+        self.match = Match.objects.create(
+            stage=self.stage,
+            home_team=Team.objects.create(name="Chiefs", logo_url="https://example.invalid/kc.png"),
+            away_team=Team.objects.create(name="Eagles"),
+            kickoff=timezone.now() + datetime.timedelta(days=2),
+        )
+        self.discord_channel = FakeOnboardingChannel(channel_id=self.channel.id)
+
+    def make_cog(self, members=()):
+        role = FakeRole(role_id=self.role.id, name="Pickers", members=list(members))
+        guild = FakeGuild(guild_id=self.guild.id, name="Test Guild", roles=[role])
+        bot = FakeBot(channel=self.discord_channel, guilds=[guild])
+        ticker = MatchTickerCog(bot=bot)
+        bot._cogs["MatchTickerCog"] = ticker
+        cog = MessagePreviewCog(bot=bot)
+        return cog
+
+    async def queue(self, kinds, **kwargs):
+        return await MessagePreviewRequest.objects.acreate(
+            guild_pool=self.guild_pool,
+            match=self.match,
+            kinds=list(kinds),
+            **kwargs,
+        )
+
+    async def run_once(self, cog=None):
+        cog = cog or self.make_cog()
+        request = await MessagePreviewRequest.objects.select_related(
+            "guild_pool", "match", "match__stage", "match__home_team", "match__away_team"
+        ).aget()
+        await cog.post_preview(request)
+        return cog
+
+    async def test_every_requested_message_is_posted_under_one_header(self):
+        await self.queue(
+            [
+                PreviewMessageKind.POLL,
+                PreviewMessageKind.STARTING_SOON,
+                PreviewMessageKind.IN_PROGRESS,
+                PreviewMessageKind.RESULT_POSTED,
+            ]
+        )
+
+        await self.run_once()
+
+        sends = self.discord_channel.sends
+        self.assertEqual(len(sends), 5)  # the header, then one per kind
+        self.assertIn("Test messages", sends[0]["content"])
+        self.assertIsNotNone(sends[1]["poll"])
+        self.assertTrue(all("view" in send for send in sends[2:]))
+
+        request = await MessagePreviewRequest.objects.aget()
+        self.assertEqual(request.status, PreviewStatus.POSTED)
+        self.assertEqual(request.posted_message_ids, [send["message"].id for send in sends])
+
+    async def test_nothing_it_posts_is_tracked_as_a_real_message(self):
+        """An ActiveMatchMessage row would make the poll loop skip this match
+        and hand the preview to the ticker to edit."""
+        await self.queue([PreviewMessageKind.POLL, PreviewMessageKind.IN_PROGRESS])
+
+        await self.run_once()
+
+        self.assertFalse(await ActiveMatchMessage.objects.aexists())
+
+    async def test_a_preview_never_pings_anyone(self):
+        """The reminder's whole point is that it pings, so previewing it as-is
+        would ping a role about a match that is not really starting."""
+        await self.queue([PreviewMessageKind.STARTING_SOON])
+
+        await self.run_once(self.make_cog(members=[FakeMember(222, name="quiet")]))
+
+        reminder = self.discord_channel.sends[-1]
+        self.assertIn("<@222>", " ".join(text_of(reminder["view"])))
+        allowed = reminder["allowed_mentions"]
+        self.assertFalse(allowed.users)
+        self.assertFalse(allowed.roles)
+        self.assertFalse(allowed.everyone)
+
+    async def test_a_played_match_still_gets_a_poll(self):
+        """Discord refuses a poll whose duration is in the past, and last
+        season's fixtures are usually the only finished ones to preview."""
+        await Match.objects.filter(pk=self.match.pk).aupdate(
+            kickoff=timezone.now() - datetime.timedelta(days=3),
+            status=MatchStatus.FINISHED,
+            home_score=21,
+            away_score=17,
+        )
+        await self.queue([PreviewMessageKind.POLL])
+
+        await self.run_once()
+
+        poll = self.discord_channel.sends[-1]["poll"]
+        self.assertGreater(poll.duration.total_seconds(), 0)
+
+    async def test_an_unpollable_stage_is_reported_rather_than_swallowed(self):
+        """A stage missing from the answer-order map has its matches skipped by
+        the real poll loop too, which is exactly what a preview should surface."""
+        await Stage.objects.filter(pk=self.stage.pk).aupdate(stage_type=StageType.OTHER)
+        await self.queue([PreviewMessageKind.POLL])
+        cog = self.make_cog()
+
+        await cog.preview_loop()
+
+        request = await MessagePreviewRequest.objects.aget()
+        self.assertEqual(request.status, PreviewStatus.FAILED)
+        self.assertIn("no poll answer ordering", request.error)
+        # The header went out before the failure, so it has to be recoverable.
+        self.assertEqual(len(request.posted_message_ids), 1)
+
+    async def test_the_component_gallery_carries_the_real_button(self):
+        """A mock-up would prove the layout renders and nothing about whether
+        the button dispatches, which is the half that breaks."""
+        await self.queue([PreviewMessageKind.COMPONENTS])
+
+        await self.run_once()
+
+        view = self.discord_channel.sends[-1]["view"]
+        buttons = [c for c in walk_components(view) if c["type"] == COMPONENT_BUTTON]
+        self.assertEqual([b["custom_id"] for b in buttons], [f"otterball:notifications:{self.pool.id}"])
+        self.assertIn(self.pool.name, " ".join(text_of(view)))
+
+    def test_every_gallery_component_is_actually_dispatchable(self):
+        """An entry whose custom_id does not match its own dynamic template is
+        an inert button, and nothing else would notice."""
+        for entry in INTERACTIVE_COMPONENTS:
+            item = entry.build(self.pool.id)
+            template = type(item).__discord_ui_compiled_template__
+
+            self.assertIsNotNone(
+                template.fullmatch(item.item.custom_id),
+                f"{entry.title} emits a custom_id its template does not dispatch",
+            )
+
+    async def test_cleanup_deletes_what_it_posted(self):
+        await self.queue([PreviewMessageKind.POLL, PreviewMessageKind.IN_PROGRESS])
+        cog = await self.run_once()
+        posted = [send["message"] for send in self.discord_channel.sends]
+
+        await MessagePreviewRequest.objects.aupdate(cleanup_requested=True)
+        await cog.preview_loop()
+
+        self.assertTrue(all(message.deleted for message in posted))
+        request = await MessagePreviewRequest.objects.aget()
+        self.assertEqual(request.status, PreviewStatus.CLEANED)
+        self.assertEqual(request.posted_message_ids, [])
+        self.assertIsNotNone(request.cleaned_at)
+
+    async def test_a_message_already_deleted_by_hand_is_not_an_error(self):
+        await self.queue([PreviewMessageKind.IN_PROGRESS])
+        cog = await self.run_once()
+        self.discord_channel.messages.clear()
+
+        await MessagePreviewRequest.objects.aupdate(cleanup_requested=True)
+        await cog.preview_loop()
+
+        request = await MessagePreviewRequest.objects.aget()
+        self.assertEqual(request.status, PreviewStatus.CLEANED)
+
+    async def test_a_posted_request_is_not_posted_again(self):
+        await self.queue([PreviewMessageKind.IN_PROGRESS])
+        cog = await self.run_once()
+        sends_after_first = len(self.discord_channel.sends)
+
+        await cog.preview_loop()
+
+        self.assertEqual(len(self.discord_channel.sends), sends_after_first)

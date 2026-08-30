@@ -4,8 +4,15 @@ import datetime
 
 from django import forms
 from django.db.models import Count
+from django.utils import timezone
 
-from discord_bot.models import DiscordChannel, DiscordGuild, DiscordGuildRole
+from discord_bot.models import (
+    DiscordChannel,
+    DiscordGuild,
+    DiscordGuildPool,
+    DiscordGuildRole,
+    PreviewMessageKind,
+)
 from predictions.models import (
     DEFAULT_POLL_LOOKAHEAD_DAYS,
     DEFAULT_REMINDER_LEAD_MINUTES,
@@ -13,7 +20,7 @@ from predictions.models import (
     MAX_REMINDER_LEAD_MINUTES,
     DayOfWeek,
 )
-from sports.models import Season
+from sports.models import Match, Season
 
 
 class SeasonChoiceField(forms.ModelChoiceField):
@@ -206,3 +213,83 @@ class PoolSetupForm(forms.Form):
             self.add_error("notification_role", f"That role is in {role.guild.name}, not {guild.name}.")
 
         return cleaned
+
+
+class MatchChoiceField(forms.ModelChoiceField):
+    """Fixtures labelled with kickoff and state, since that is what is picked.
+
+    Which match you preview decides which messages make sense: only a finished
+    one has a score to render at full time, and only an upcoming one has a
+    poll that would really run.
+    """
+
+    def label_from_instance(self, match) -> str:
+        kickoff = timezone.localtime(match.kickoff).strftime("%Y-%m-%d %H:%M")
+        score = ""
+        if match.home_score is not None and match.away_score is not None:
+            score = f" {match.home_score}:{match.away_score}"
+        return f"{kickoff} · {match.home_team} vs. {match.away_team} · {match.get_status_display()}{score}"
+
+
+class GuildPoolChoiceField(forms.ModelChoiceField):
+    def label_from_instance(self, guild_pool) -> str:
+        return f"{guild_pool.guild.name} · #{guild_pool.channel.name}"
+
+
+class MessagePreviewForm(forms.Form):
+    """Post one match's messages into a pool's channel, to look at them.
+
+    Scoped to a pool because that is what decides how they render - the poll's
+    answers come from the match's stage, the reminder's names from the pool's
+    notification role, and the full-time list from its predictions.
+    """
+
+    guild_pool = GuildPoolChoiceField(
+        queryset=DiscordGuildPool.objects.none(),
+        label="Channel",
+        help_text="Where the test messages go. Only bindings with a channel are offered.",
+    )
+    match = MatchChoiceField(
+        queryset=Match.objects.none(),
+        help_text="Nothing about the match is changed, and no prediction is created.",
+    )
+    kinds = forms.MultipleChoiceField(
+        choices=PreviewMessageKind.choices,
+        widget=forms.CheckboxSelectMultiple,
+        initial=[kind.value for kind in PreviewMessageKind],
+        label="Messages to post",
+        help_text="Posted in this order, as separate messages - the real ticker edits one message instead.",
+    )
+
+    def __init__(self, pool, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.pool = pool
+        self.fields["guild_pool"].queryset = (
+            DiscordGuildPool.objects.filter(pool=pool, is_active=True, channel__isnull=False)
+            .select_related("guild", "channel")
+            .order_by("guild__name")
+        )
+        matches = (
+            Match.objects.filter(stage__season_id=pool.season_id)
+            .select_related("home_team", "away_team", "stage")
+            .order_by("kickoff")
+        )
+        self.fields["match"].queryset = matches
+        self.fields["guild_pool"].initial = self.fields["guild_pool"].queryset.first()
+        self.fields["match"].initial = self.default_match(matches)
+
+    @staticmethod
+    def default_match(matches):
+        """The next match to be played, or the last one played if none is left.
+
+        Same rule the public front page uses to pick a season: whatever is
+        about to happen is what someone is most likely to be checking.
+        """
+        now = timezone.now()
+        return matches.filter(kickoff__gte=now).first() or matches.order_by("-kickoff").first()
+
+    def clean_kinds(self) -> list[str]:
+        # Stored on the request row and read back by the bot in this order, so
+        # it has to be the order the channel would see them in.
+        order = [kind.value for kind in PreviewMessageKind]
+        return sorted(self.cleaned_data["kinds"], key=order.index)
