@@ -83,11 +83,14 @@ class RemoveGarbageCog(commands.Cog):
         # One sweep per place, not per poll: with the polls posted straight into
         # the pool channel, iterating ActiveMatchMessage would re-read the same
         # channel history once per match of the season.
+        # Not `.aiterator()`: values_list(flat=False) is the one iterable whose
+        # __iter__ *returns* the compiler's result iterator instead of yielding
+        # from it, so aiterator() builds it on the event loop, asks for a
+        # chunked cursor there, and Django raises SynchronousOnlyOperation.
+        # Plain `async for` goes through __aiter__, which fetches in a thread.
         container_ids = {
             thread_id or channel_id
-            async for thread_id, channel_id in ActiveMatchMessage.objects.values_list(
-                "thread_id", "channel_id"
-            ).aiterator()
+            async for thread_id, channel_id in ActiveMatchMessage.objects.values_list("thread_id", "channel_id")
         }
         # A pool channel that has not posted a poll yet still collects pin
         # notices from the leaderboard message.

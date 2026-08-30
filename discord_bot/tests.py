@@ -864,6 +864,62 @@ class GarbageFilterTests(TestCase):
         self.assertFalse(cog._is_garbage(message))
 
 
+class GarbageSweepQueryTests(TestCase):
+    """The historical sweep reads its channel ids from the event loop.
+
+    It used to do that with `.values_list(...).aiterator()`, and that pairing is
+    the one Django refuses: ValuesListIterable.__iter__ *returns* the compiler's
+    result iterator rather than yielding from it, so aiterator() - which builds
+    the generator on the calling thread on purpose - executed the query on the
+    loop and raised SynchronousOnlyOperation. on_ready swallowed nothing, so the
+    whole sweep was skipped on every boot and the channel kept its noise.
+    """
+
+    def setUp(self):
+        self.competition = Competition.objects.create(name="NFL")
+        self.season = Season.objects.create(name="NFL 2026", competition=self.competition, year=2026)
+        self.stage = Stage.objects.create(season=self.season, name="Regular Season", stage_type=StageType.LEAGUE)
+        self.pool = PredictionPool.objects.create(name="NFL 2026", season=self.season)
+        self.guild = DiscordGuild.objects.create(id=1, name="Test Guild")
+        self.channel = DiscordChannel.objects.create(id=10, guild=self.guild, name="general", channel_type="text")
+        ActiveMatchMessage.objects.create(
+            match=Match.objects.create(
+                stage=self.stage,
+                home_team=Team.objects.create(name="Chiefs"),
+                away_team=Team.objects.create(name="Eagles"),
+                kickoff=timezone.now(),
+            ),
+            guild=self.guild,
+            pool=self.pool,
+            channel=self.channel,
+            poll_message_id=30,
+        )
+
+    async def test_the_sweep_reaches_the_channels_it_read_from_the_database(self):
+        class RecordingBot(FakeBot):
+            def __init__(self):
+                super().__init__(channel=None)
+                self.asked_for = []
+                self.user = FakeVoter(42, "otterball")
+
+            def get_channel(self, channel_id):
+                self.asked_for.append(channel_id)
+                return None
+
+            async def fetch_channel(self, channel_id):
+                raise discord.NotFound(FakeResponse(404), "unknown channel")
+
+        bot = RecordingBot()
+        cog = RemoveGarbageCog(bot=bot)
+
+        await cog.on_ready()
+
+        # Raising here would fail the test outright; these assert the query
+        # actually produced the row rather than quietly yielding nothing.
+        self.assertIn(10, bot.asked_for)
+        self.assertFalse(cog.cleanup_running)
+
+
 class ReminderWindowTests(TestCase):
     """Covers the per-pool reminder lead time.
 
