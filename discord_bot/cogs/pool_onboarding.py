@@ -301,6 +301,7 @@ class PoolOnboardingCog(commands.Cog):
         fingerprint = str(view.to_components())
 
         if not guild_pool.welcome_msg:
+            self.warn_if_unpingable(role, channel)
             await self.post_welcome(guild_pool, channel, view, ping=True)
             self.welcomes[guild_pool.id] = fingerprint
             return
@@ -331,6 +332,33 @@ class PoolOnboardingCog(commands.Cog):
             # and cache the render so this stops refetching every minute.
             logger.warning(f"Welcome message {guild_pool.welcome_msg} for GuildPool {guild_pool.id} is gone.")
         self.welcomes[guild_pool.id] = fingerprint
+
+    @staticmethod
+    def warn_if_unpingable(role: discord.Role | None, channel) -> None:
+        """Say so when the role mention will render but notify nobody.
+
+        Discord only delivers a role ping if the role is mentionable *or* the
+        bot has "Mention @everyone, @here and All Roles" - `allowed_mentions`
+        alone does not grant it. The message looks perfect either way, so the
+        failure is otherwise completely silent, and this post only goes out
+        once per season.
+        """
+        if role is None:
+            logger.info("The welcome has no notification role to ping - the binding names none.")
+            return
+        if getattr(role, "mentionable", True):
+            return
+
+        me = getattr(getattr(channel, "guild", None), "me", None)
+        permissions = channel.permissions_for(me) if me is not None else None
+        if permissions is not None and permissions.mention_everyone:
+            return
+
+        logger.warning(
+            f"Role {role.id} is not mentionable and the bot lacks 'Mention @everyone, @here and All Roles' "
+            f"in channel {channel.id}: the welcome will name the role but ping nobody. Make the role "
+            "mentionable, or grant the bot that permission."
+        )
 
     @staticmethod
     async def post_welcome(guild_pool: DiscordGuildPool, channel, view: WelcomeView, *, ping: bool) -> None:

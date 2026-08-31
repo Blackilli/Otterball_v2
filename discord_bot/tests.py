@@ -142,11 +142,12 @@ class FakeChannel(discord.abc.Messageable):
 
 
 class FakeRole:
-    def __init__(self, role_id, name, position=0, members=None):
+    def __init__(self, role_id, name, position=0, members=None, mentionable=True):
         self.id = role_id
         self.name = name
         self.position = position
         self.members = members or []
+        self.mentionable = mentionable
 
     @property
     def mention(self):
@@ -2197,6 +2198,31 @@ class PoolOnboardingTests(TestCase):
 
         contents = [send["content"] for send in self.discord_channel.sends]
         self.assertEqual(contents, [LEADERBOARD_PLACEHOLDER])
+
+    async def test_an_unpingable_role_is_reported(self):
+        """allowed_mentions does not grant the right to ping a role: Discord
+        needs the role to be mentionable or the bot to hold "Mention all
+        roles". The card looks identical either way, so nothing else would
+        notice."""
+        self.discord_role.mentionable = False
+
+        with self.assertLogs("discord_bot.cogs.pool_onboarding", level="WARNING") as logs:
+            await self.run_pass()
+
+        self.assertTrue(any("ping nobody" in line for line in logs.output))
+
+    async def test_a_mentionable_role_is_not_reported(self):
+        with self.assertNoLogs("discord_bot.cogs.pool_onboarding", level="WARNING"):
+            await self.run_pass()
+
+    async def test_a_binding_with_no_role_says_so(self):
+        """ "Nobody was pinged" has two causes, and they need different fixes."""
+        await DiscordGuildPool.objects.filter(pk=self.guild_pool.pk).aupdate(notification_role=None)
+
+        with self.assertLogs("discord_bot.cogs.pool_onboarding", level="INFO") as logs:
+            await self.run_pass()
+
+        self.assertTrue(any("no notification role" in line for line in logs.output))
 
     async def test_an_embed_era_welcome_is_replaced_rather_than_edited(self):
         """Discord cannot add the IS_COMPONENTS_V2 flag to a message sent
