@@ -25,6 +25,11 @@ x-shared-env: &shared-environment
   DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN}
   DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY}
   ALLOWED_HOSTS: ${ALLOWED_HOSTS:-*}
+  # The bot builds absolute links to the public pages from this, and Django
+  # trusts it as a CSRF origin - a proxy that terminates TLS speaks http to
+  # gunicorn, so without it every admin login through the proxy is a 403.
+  PUBLIC_SITE_URL: ${PUBLIC_SITE_URL:-}
+  CSRF_TRUSTED_ORIGINS: ${CSRF_TRUSTED_ORIGINS:-}
   TZ: ${TZ:-Europe/Berlin}
   # Read by docker-entrypoint.sh, which remaps appuser to these before dropping
   # privileges - so files written into the media volume belong to the host user.

@@ -100,6 +100,20 @@ class MediaServingTests(TestCase):
         self.assertEqual(response.status_code, 200)
 
 
+def load_settings(**environ):
+    """Import a fresh copy of the settings module under its own name.
+
+    Not importlib.reload: that would rebind the module django.conf.settings is
+    holding, for the rest of the suite.
+    """
+    path = Path(__file__).resolve().parent / "settings.py"
+    spec = importlib.util.spec_from_file_location("otterball_v2._settings_under_test", path)
+    module = importlib.util.module_from_spec(spec)
+    with mock.patch.dict(os.environ, environ):
+        spec.loader.exec_module(module)
+    return module
+
+
 class EnvironmentFallbackTests(SimpleTestCase):
     """A variable declared in .env but left empty must not beat its default.
 
@@ -111,21 +125,8 @@ class EnvironmentFallbackTests(SimpleTestCase):
     has not run, so that silently cost a signal.
     """
 
-    def load_settings(self, **environ):
-        """Import a fresh copy of the settings module under its own name.
-
-        Not importlib.reload: that would rebind the module django.conf.settings
-        is holding, for the rest of the suite.
-        """
-        path = Path(__file__).resolve().parent / "settings.py"
-        spec = importlib.util.spec_from_file_location("otterball_v2._settings_under_test", path)
-        module = importlib.util.module_from_spec(spec)
-        with mock.patch.dict(os.environ, environ):
-            spec.loader.exec_module(module)
-        return module
-
     def test_empty_variables_fall_back_to_their_defaults(self):
-        loaded = self.load_settings(
+        loaded = load_settings(
             DJANGO_SECRET_KEY="",
             ALLOWED_HOSTS="",
             REDIS_URL="",
@@ -142,7 +143,7 @@ class EnvironmentFallbackTests(SimpleTestCase):
         self.assertEqual(loaded.TIME_ZONE, "Europe/Berlin")
 
     def test_a_set_variable_still_wins(self):
-        loaded = self.load_settings(
+        loaded = load_settings(
             ALLOWED_HOSTS="example.com,127.0.0.1",
             REDIS_URL="redis://valkey:6379/0",
             CELERY_RESULT_BACKEND="rpc://",
@@ -153,3 +154,37 @@ class EnvironmentFallbackTests(SimpleTestCase):
         self.assertEqual(loaded.CELERY_BROKER_URL, "redis://valkey:6379/0")
         self.assertEqual(loaded.CELERY_RESULT_BACKEND, "rpc://")
         self.assertEqual(loaded.TIME_ZONE, "UTC")
+
+
+class CsrfTrustedOriginTests(SimpleTestCase):
+    """The public origin has to be trusted for CSRF, not just allowed as a host.
+
+    Nginx terminates TLS and speaks plain http to gunicorn, so the origin
+    Django rebuilds from the request is http:// while the browser sent https://
+    - and without a trusted origin every admin login through the proxy is a 403
+    ("Origin checking failed ... does not match any trusted origins"), while
+    reaching the same container directly by ip works fine.
+    """
+
+    def test_the_public_site_is_trusted_by_default(self):
+        loaded = load_settings(PUBLIC_SITE_URL="https://otterball.example.com", CSRF_TRUSTED_ORIGINS="")
+
+        self.assertEqual(loaded.CSRF_TRUSTED_ORIGINS, ["https://otterball.example.com"])
+
+    def test_further_origins_are_added_not_substituted(self):
+        loaded = load_settings(
+            PUBLIC_SITE_URL="https://otterball.example.com",
+            CSRF_TRUSTED_ORIGINS="http://10.0.99.100:6887, https://otterball.example.com/",
+        )
+
+        self.assertEqual(
+            loaded.CSRF_TRUSTED_ORIGINS,
+            ["https://otterball.example.com", "http://10.0.99.100:6887"],
+        )
+
+    def test_every_trusted_origin_carries_a_scheme(self):
+        """Django rejects a bare hostname here, and only at request time."""
+        loaded = load_settings(PUBLIC_SITE_URL="https://otterball.example.com", CSRF_TRUSTED_ORIGINS="")
+
+        for origin in loaded.CSRF_TRUSTED_ORIGINS:
+            self.assertIn("://", origin)

@@ -39,6 +39,21 @@ ALLOWED_HOSTS = (os.getenv("ALLOWED_HOSTS") or "*").split(",")
 # by Django. Trailing slash stripped so a path can always be appended.
 PUBLIC_SITE_URL = (os.getenv("PUBLIC_SITE_URL") or "https://otterball.byilli.com").rstrip("/")
 
+# Django compares the browser's `Origin` header against this list before it
+# accepts any POST, and behind a TLS-terminating proxy nothing else can: the
+# proxy speaks plain http to gunicorn, so the scheme Django derives from the
+# request is `http://` while the browser sent `https://` and every admin login
+# is a 403 ("Origin checking failed ... does not match any trusted origins").
+# PUBLIC_SITE_URL is *exactly* that origin, so it is trusted rather than
+# configured a second time; CSRF_TRUSTED_ORIGINS adds any further ones
+# (comma-separated, scheme included - Django rejects a bare hostname here).
+CSRF_TRUSTED_ORIGINS = list(
+    dict.fromkeys(
+        [PUBLIC_SITE_URL]
+        + [o.strip().rstrip("/") for o in (os.getenv("CSRF_TRUSTED_ORIGINS") or "").split(",") if o.strip()]
+    )
+)
+
 
 # Application definition
 

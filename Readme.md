@@ -72,6 +72,13 @@ TZ=Europe/Berlin
 # message has no request to build an absolute URL from.
 PUBLIC_SITE_URL=https://your-domain.com
 
+# Any further origin an admin form is submitted from, comma-separated and with
+# the scheme (Django rejects a bare hostname). PUBLIC_SITE_URL is trusted
+# already; this is for reaching the container directly beside the proxy.
+# A TLS-terminating proxy speaks plain http to gunicorn, so the origin Django
+# rebuilds is http:// while the browser sent https:// - and the login is a 403.
+#CSRF_TRUSTED_ORIGINS=http://10.0.0.5:8000
+
 # Host/container port the web service listens on and is published under
 # (gunicorn binds it, the healthcheck probes it, compose publishes it).
 WEB_PORT=8000
