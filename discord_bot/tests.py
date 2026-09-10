@@ -1,4 +1,5 @@
 import datetime
+import re
 from io import StringIO
 
 import discord
@@ -18,7 +19,7 @@ from discord_bot.cogs.guild_sync import GuildSyncCog
 from discord_bot.cogs.leaderboard_sync import LeaderboardSyncCog
 from discord_bot.cogs.match_ticker import MatchTickerCog
 from discord_bot.cogs.message_preview import MessagePreviewCog
-from discord_bot.cogs.poll_creation import matches_needing_polls
+from discord_bot.cogs.poll_creation import build_poll_content, matches_needing_polls
 from discord_bot.cogs.pool_onboarding import (
     LEADERBOARD_PLACEHOLDER,
     PoolOnboardingCog,
@@ -31,6 +32,7 @@ from discord_bot.cogs.role_sync import RoleSyncCog
 from discord_bot.components import (
     FIGURE_SPACE,
     HALF_DIGIT,
+    INDENT_ANCHOR,
     INTERACTIVE_COMPONENTS,
     NotificationSettingsButton,
     NotificationSettingsModal,
@@ -1146,8 +1148,8 @@ class MatchStatusViewTests(TestCase):
         texts = text_of(self.live_view(17, 10))
 
         self.assertIn("## **Chiefs**", texts)
-        self.assertIn(f"# {FIGURE_SPACE * 2}17", texts)
-        self.assertIn(f"# {FIGURE_SPACE * 2}10", texts)
+        self.assertIn(f"# {INDENT_ANCHOR}{FIGURE_SPACE}17", texts)
+        self.assertIn(f"# {INDENT_ANCHOR}{FIGURE_SPACE}10", texts)
 
     def test_an_unplayed_match_shows_a_dash_where_the_score_goes(self):
         """Same two-line shape before kickoff as during the match.
@@ -1159,15 +1161,15 @@ class MatchStatusViewTests(TestCase):
         texts = text_of(self.live_view(None, None))
 
         self.assertIn("## Chiefs", texts)
-        self.assertIn(f"# {FIGURE_SPACE * 2}–", texts)
+        self.assertIn(f"# {INDENT_ANCHOR}{FIGURE_SPACE}–", texts)
         self.assertEqual(len([t for t in texts if t.startswith("# ")]), 2)
-        self.assertNotIn(f"# {FIGURE_SPACE * 2}0", texts)
+        self.assertNotIn(f"# {INDENT_ANCHOR}{FIGURE_SPACE}0", texts)
 
     def test_a_missing_score_beside_a_real_one_is_still_lined_up(self):
         texts = text_of(self.live_view(24, None))
 
-        self.assertIn(f"# {FIGURE_SPACE * 2}24", texts)
-        self.assertIn(f"# {FIGURE_SPACE * 2}{HALF_DIGIT}–", texts)
+        self.assertIn(f"# {INDENT_ANCHOR}{FIGURE_SPACE}24", texts)
+        self.assertIn(f"# {INDENT_ANCHOR}{FIGURE_SPACE}{HALF_DIGIT}–", texts)
 
     def test_a_team_without_a_logo_drops_to_plain_text_without_losing_the_other(self):
         self.home.logo_url = None
@@ -1205,8 +1207,33 @@ class MatchStatusViewTests(TestCase):
         """
         texts = text_of(self.live_view(24, 7))
 
-        self.assertIn(f"# {FIGURE_SPACE * 2}24", texts)
-        self.assertIn(f"# {FIGURE_SPACE * 2}{HALF_DIGIT}7", texts)
+        self.assertIn(f"# {INDENT_ANCHOR}{FIGURE_SPACE}24", texts)
+        self.assertIn(f"# {INDENT_ANCHOR}{FIGURE_SPACE}{HALF_DIGIT}7", texts)
+
+    def test_nothing_a_phone_would_strip_carries_the_layout(self):
+        """Discord's mobile clients drop whitespace at the start of a line.
+
+        Every indent in these messages has to hang off a printing character,
+        or the scoreboard lines up on desktop and collapses flush left on the
+        phone most of the pool reads the channel on - which is exactly what
+        it did.
+        """
+        for view in (self.live_view(24, 7), self.live_view(None, None), self.live_view(17, 10)):
+            for text in text_of(view):
+                for line in text.splitlines():
+                    content = re.sub(r"^#{1,3} ", "", line)
+                    self.assertFalse(
+                        content[:1].isspace(),
+                        f"{line!r} starts with whitespace a mobile client would strip",
+                    )
+
+    def test_both_scores_hang_off_the_same_anchor(self):
+        """It is on both rows, so it cannot pull one of them off the axis."""
+        score_lines = [t for t in text_of(self.live_view(24, 7)) if t.startswith("# ")]
+
+        self.assertEqual(len(score_lines), 2)
+        for line in score_lines:
+            self.assertTrue(line.startswith(f"# {INDENT_ANCHOR}"), line)
 
     def test_two_scores_of_equal_width_get_no_nudge(self):
         for home_score, away_score in ((17, 24), (7, 3)):
@@ -2692,3 +2719,88 @@ class MessagePreviewCogTests(TestCase):
         await cog.preview_loop()
 
         self.assertEqual(len(self.discord_channel.sends), sends_after_first)
+
+
+class ReminderCopyTests(TestCase):
+    """What the pre-kickoff reminder has to say, whoever is reading it.
+
+    The whole point of the message is "this closes soon", and a pool's players
+    are not all in the server's timezone - so the countdown is Discord's own
+    <t:epoch:R> markup, which every client renders in the reader's own terms,
+    rather than a time this process formatted.
+    """
+
+    def setUp(self):
+        self.competition = Competition.objects.create(name="NFL")
+        self.season = Season.objects.create(name="NFL 2026", competition=self.competition, year=2026)
+        self.stage = Stage.objects.create(season=self.season, name="Regular Season", stage_type=StageType.LEAGUE)
+        self.match = Match.objects.create(
+            stage=self.stage,
+            home_team=Team.objects.create(name="Chiefs", logo_url="https://example.invalid/kc.png"),
+            away_team=Team.objects.create(name="Eagles"),
+            kickoff=timezone.now() + datetime.timedelta(minutes=90),
+        )
+        self.pool = PredictionPool.objects.create(name="NFL 2026", season=self.season)
+        self.guild = DiscordGuild.objects.create(id=1, name="Test Guild")
+        self.channel = DiscordChannel.objects.create(id=10, guild=self.guild, name="general", channel_type="text")
+        self.active_msg = ActiveMatchMessage.objects.create(
+            match=self.match, guild=self.guild, pool=self.pool, channel=self.channel, poll_message_id=30
+        )
+        self.cog = MatchTickerCog(bot=FakeBot())
+
+    def rendered(self, mentions=()):
+        active_msg = ActiveMatchMessage.objects.select_related("match", "match__home_team", "match__away_team").get(
+            poll_message_id=30
+        )
+        view, _ = self.cog._render_starting_soon(active_msg, list(mentions))
+        return " ".join(text_of(view))
+
+    def test_the_countdown_is_discords_own_relative_timestamp(self):
+        expected = f"<t:{int(self.match.kickoff.timestamp())}:R>"
+
+        self.assertIn(expected, self.rendered())
+
+    def test_it_is_there_whether_or_not_anyone_is_being_pinged(self):
+        """The message still posts with no names on it, and still has to say when."""
+        with_names = self.rendered(["<@222>"])
+
+        self.assertIn(f"<t:{int(self.match.kickoff.timestamp())}:R>", with_names)
+        self.assertIn("<@222>", with_names)
+
+
+class PollContentTests(TestCase):
+    """The message the poll rides on - who, which round, and when."""
+
+    def setUp(self):
+        self.competition = Competition.objects.create(name="NFL")
+        self.season = Season.objects.create(name="NFL 2026", competition=self.competition, year=2026)
+        self.stage = Stage.objects.create(season=self.season, name="Regular Season", stage_type=StageType.LEAGUE)
+        self.match = Match.objects.create(
+            stage=self.stage,
+            home_team=Team.objects.create(name="Chiefs"),
+            away_team=Team.objects.create(name="Eagles"),
+            kickoff=timezone.now() + datetime.timedelta(days=1),
+        )
+
+    def content(self):
+        return build_poll_content(self.match, "🔴", "🟢")
+
+    def test_both_times_are_discords_own_markup(self):
+        epoch = int(self.match.kickoff.timestamp())
+
+        content = self.content()
+
+        self.assertIn(f"<t:{epoch}:F>", content)
+        self.assertIn(f"<t:{epoch}:R>", content)
+
+    def test_the_gap_after_each_icon_is_made_of_figure_spaces(self):
+        """A run of ordinary spaces collapses to one; these do not.
+
+        The same class of bug as the scoreboard's indent - it looked right in
+        the client it was written against and nowhere else.
+        """
+        content = self.content()
+
+        self.assertIn(f"📅{FIGURE_SPACE * 3}", content)
+        self.assertIn(f"⏳{FIGURE_SPACE * 3}", content)
+        self.assertNotIn("  ", content)

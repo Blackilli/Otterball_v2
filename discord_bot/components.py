@@ -126,8 +126,17 @@ FIGURE_SPACE = "\N{FIGURE SPACE}"
 # character to the left.
 HALF_DIGIT = "\N{FOUR-PER-EM SPACE}"
 
-# How far the score sits in from the margin, in digit widths.
-SCORE_INDENT = 2
+# Discord's mobile clients strip whitespace from the start of a rendered line,
+# so an indent made of spaces alone lines the score up on desktop and vanishes
+# on a phone - which is where most of the pool reads the channel. U+2800 is a
+# *printing* character that happens to be blank, so it survives the trim and
+# the padding after it is no longer leading. Every score line carries it, so
+# the two rows still start on the same axis.
+INDENT_ANCHOR = "\N{BRAILLE PATTERN BLANK}"
+
+# How far the score sits in from the margin, in digit widths, on top of the
+# anchor above - which is itself about a character wide.
+SCORE_INDENT = 1
 
 # Stands in for a score that does not exist yet, so a match before kickoff has
 # the same shape as one in progress. Never a zero: an unplayed game is not 0-0,
@@ -145,7 +154,7 @@ def score_line(score: int | str, widest: int) -> str:
     pad = FIGURE_SPACE * (SCORE_INDENT + shortfall // 2)
     if shortfall % 2:
         pad += HALF_DIGIT
-    return f"# {pad}{score}"
+    return f"# {INDENT_ANCHOR}{pad}{score}"
 
 
 class WelcomeView(ui.LayoutView):
