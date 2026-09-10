@@ -8,6 +8,7 @@ from discord.ext import commands, tasks
 from discord.utils import format_dt
 from django.utils import timezone
 
+from discord_bot.components import FIGURE_SPACE
 from discord_bot.constants import DISCORD_POLL_ANSWER_ORDER_MAP
 from discord_bot.models import ActiveMatchMessage, DiscordGuildPool, DiscordTeamEmoji
 from predictions.models import MAX_POLL_LOOKAHEAD_DAYS, PoolConfiguration
@@ -62,8 +63,11 @@ def build_poll_content(match: Match, home_emoji, away_emoji) -> str:
     """The message the poll rides on: who, which round, and when."""
     content = f"# **{home_emoji} {match.home_team}** vs. **{match.away_team} {away_emoji}**"
     content += f"\n### Stage: `{match.stage.name}`"
-    content += f"\n### 📅       {format_dt(match.kickoff, style='F')}"
-    content += f"\n### ⏳       {format_dt(match.kickoff, style='R')}"
+    # Figure spaces, not a run of ordinary ones: a markdown renderer collapses
+    # those to a single space, so the gap after the icon only ever survived by
+    # accident. Same reason the scoreboard pads with them.
+    content += f"\n### 📅{FIGURE_SPACE * 3}{format_dt(match.kickoff, style='F')}"
+    content += f"\n### ⏳{FIGURE_SPACE * 3}{format_dt(match.kickoff, style='R')}"
     content += "\n-# Polls may close early, so don't vote on the last second"
     return content
 
