@@ -430,11 +430,14 @@ class LeaderboardView(SeasonPageView):
         async for pool in season.prediction_pools.order_by("-is_active", "-created_at"):
             # picks and correct ride along on the user: aget_user_with_points
             # annotates both, because the ranking needs the ratio to order by.
+            # Picks is the *settled* count - the same denominator the hit rate
+            # beside it divides by, so the row cannot read "10 picks, 3 correct,
+            # 60%" while a week of fixtures is still open.
             rows = [
                 LeaderboardRow(
                     rank=rank,
                     name=user.display_name,
-                    picks=user.pool_prediction_count,
+                    picks=user.pool_settled_count,
                     correct=user.pool_correct_count,
                     points=points,
                 )

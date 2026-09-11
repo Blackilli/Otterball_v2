@@ -14,7 +14,7 @@ from django.db.models.signals import post_save
 from django.dispatch import receiver
 from django.utils import timezone
 
-from sports.models import Match, MatchOutcome, Season, Stage
+from sports.models import Match, MatchOutcome, MatchStatus, Season, Stage
 
 logger = logging.getLogger(__name__)
 
@@ -162,22 +162,47 @@ class PredictionPool(models.Model):
                     "predictions",
                     filter=Q(predictions__pool=self),
                 ),
+                # The hit rate's denominator, and it is *not* every pick: a
+                # match still to be played has not been got wrong yet, so
+                # counting it drags a player's accuracy down for as long as the
+                # fixture is open - worst right after a poll batch, when
+                # everyone has just voted on a week nobody has played. Only
+                # FINISHED counts, which also drops a postponed or cancelled
+                # fixture: its predictions are void, and scoring them as misses
+                # would punish people for a match that never happened.
+                pool_settled_count=Count(
+                    "predictions",
+                    filter=Q(predictions__pool=self, predictions__match__status=MatchStatus.FINISHED),
+                ),
+                # Carries the same FINISHED condition as the denominator, so
+                # the pair can never come from different sets of matches - a
+                # scored prediction on a fixture later marked postponed would
+                # otherwise leave someone correct on more matches than they
+                # have settled, and a hit rate over 100%.
                 pool_correct_count=Count(
                     "predictions",
-                    filter=Q(predictions__pool=self, predictions__points_awarded__gt=0),
+                    filter=Q(
+                        predictions__pool=self,
+                        predictions__points_awarded__gt=0,
+                        predictions__match__status=MatchStatus.FINISHED,
+                    ),
                 ),
             )
             .annotate(
                 # The tiebreaker, unrounded. Guarded rather than relying on the
                 # HAVING below to spare it: the ratio is computed in the SELECT
                 # list, and Postgres raises on division by zero where SQLite
-                # quietly returns NULL.
+                # quietly returns NULL. Nobody has a rate before the first
+                # result, so everyone sits on 0.0 and points alone order them.
                 pool_hit_rate=Case(
-                    When(pool_prediction_count=0, then=Value(0.0)),
-                    default=Cast("pool_correct_count", FloatField()) / Cast("pool_prediction_count", FloatField()),
+                    When(pool_settled_count=0, then=Value(0.0)),
+                    default=Cast("pool_correct_count", FloatField()) / Cast("pool_settled_count", FloatField()),
                     output_field=FloatField(),
                 ),
             )
+            # Any pick at all, settled or not: someone who has voted on a week
+            # nobody has played yet is playing, and dropping them until the
+            # first kickoff would empty the board at the start of a season.
             .filter(pool_prediction_count__gt=0)
             # Every caller renders a name, and the Discord profile is where
             # the name people know each other by lives: one LEFT JOIN on a
