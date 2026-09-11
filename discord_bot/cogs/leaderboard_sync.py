@@ -57,7 +57,7 @@ class LeaderboardSyncCog(commands.Cog):
                     points,
                     # Rounded by the same helper the website calls, so a player
                     # cannot read two different numbers in the two places.
-                    hit_rate_percent(user.pool_correct_count, user.pool_prediction_count),
+                    hit_rate_percent(user.pool_correct_count, user.pool_settled_count),
                 )
             )
 

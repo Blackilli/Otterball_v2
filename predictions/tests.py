@@ -465,6 +465,32 @@ class LeaderboardTests(TestCase):
     async def ranked(self):
         return {user.username: rank async for rank, user, _points in self.pool.aget_leaderboard()}
 
+    async def pick_open(self, user, count=1):
+        """A pick on a fixture that has not been played, the usual state of a
+        poll batch: voted on, scoring nothing yet, and not wrong."""
+        for _ in range(count):
+            match = await Match.objects.acreate(
+                stage=self.stage,
+                home_team=self.home_team,
+                away_team=self.away_team,
+                kickoff=timezone.now() + datetime.timedelta(days=1),
+                status=MatchStatus.SCHEDULED,
+            )
+            await Prediction.objects.acreate(
+                pool=self.pool,
+                match=match,
+                user=user,
+                predicted_outcome=MatchOutcome.HOME_WIN,
+                points_awarded=0,
+                is_processed=False,
+            )
+
+    async def standing(self, username):
+        async for _rank, user, _points in self.pool.aget_leaderboard():
+            if user.username == username:
+                return user
+        raise AssertionError(f"{username} is not on the board")
+
     async def test_accuracy_breaks_a_tie_on_points(self):
         """Both on 8, but alice got both her picks right and bob missed two."""
         await self.award_many(self.alice, 4, 4)
@@ -519,7 +545,71 @@ class LeaderboardTests(TestCase):
         _rank, user, points = leaderboard[0]
 
         self.assertEqual((points, user.pool_prediction_count, user.pool_correct_count), (8, 3, 2))
+        # Every one of those three has been played, so settled equals picks.
+        self.assertEqual(user.pool_settled_count, 3)
         self.assertAlmostEqual(user.pool_hit_rate, 2 / 3)
+
+    async def test_an_unplayed_match_is_not_a_miss(self):
+        """A fixture nobody has played has not been got wrong yet.
+
+        Counting it dragged everyone's accuracy down for as long as the poll
+        was open - worst right after a batch is posted, when a week of picks
+        sits unplayed and every player reads as half as sharp as they are.
+        """
+        await self.award_many(self.alice, 4, 4)
+        await self.pick_open(self.alice, count=3)
+
+        alice = await self.standing("alice")
+
+        self.assertEqual((alice.pool_settled_count, alice.pool_correct_count), (2, 2))
+        self.assertAlmostEqual(alice.pool_hit_rate, 1.0)
+
+    async def test_an_open_fixture_cannot_reorder_the_table(self):
+        """Both perfect on what has been played; one has voted ahead as well."""
+        await self.award_many(self.alice, 4, 4)
+        await self.award_many(self.bob, 4, 4)
+        await self.pick_open(self.bob, count=2)
+
+        self.assertEqual(await self.ranked(), {"alice": 1, "bob": 1})
+
+    async def test_a_player_who_has_only_picked_ahead_is_still_on_the_board(self):
+        """Playing means having picked, not having been scored.
+
+        Dropping them until the first kickoff would empty the board at the
+        start of a season, which is exactly when people check it.
+        """
+        await self.pick_open(self.alice, count=2)
+
+        alice = await self.standing("alice")
+
+        self.assertEqual((alice.pool_prediction_count, alice.pool_settled_count), (2, 0))
+        # No division by zero, and no rate invented out of nothing.
+        self.assertEqual(alice.pool_hit_rate, 0.0)
+
+    async def test_a_cancelled_fixture_is_not_a_miss_either(self):
+        """Its predictions are void - the ticker says so - so scoring them as
+        misses would punish people for a match that never happened."""
+        await self.award_many(self.alice, 4)
+        match = await Match.objects.acreate(
+            stage=self.stage,
+            home_team=self.home_team,
+            away_team=self.away_team,
+            kickoff=timezone.now(),
+            status=MatchStatus.CANCELLED,
+        )
+        await Prediction.objects.acreate(
+            pool=self.pool,
+            match=match,
+            user=self.alice,
+            predicted_outcome=MatchOutcome.HOME_WIN,
+            points_awarded=0,
+            is_processed=True,
+        )
+
+        alice = await self.standing("alice")
+
+        self.assertEqual(alice.pool_settled_count, 1)
+        self.assertAlmostEqual(alice.pool_hit_rate, 1.0)
 
     async def test_tied_scores_share_a_rank_and_next_rank_skips(self):
         await self.award(self.alice, 10)
@@ -1290,6 +1380,26 @@ class RankHistoryTests(TestCase):
             .order_by("match__kickoff", "match_id")
         )
 
+    def open_fixture(self, users):
+        """A match nobody has played, picked by everyone given."""
+        self.match_count += 1
+        match = Match.objects.create(
+            stage=self.stage,
+            home_team=self.home_team,
+            away_team=self.away_team,
+            kickoff=timezone.now() + datetime.timedelta(days=1),
+            status=MatchStatus.SCHEDULED,
+        )
+        for user in users:
+            Prediction.objects.create(
+                pool=self.pool,
+                match=match,
+                user=user,
+                predicted_outcome=MatchOutcome.HOME_WIN,
+                points_awarded=0,
+                is_processed=False,
+            )
+
     def test_points_accumulate_across_matches(self):
         history = build_rank_history(self.play({self.alice: 3}, {self.alice: 4}, {self.alice: 0}))
 
@@ -1468,6 +1578,26 @@ class RankHistoryTests(TestCase):
 
         live = {user.id: (rank, points) async for rank, user, points in self.pool.aget_leaderboard()}
         charted = {standing.user_id: (standing.rank, standing.points) for standing in history[-1].standings.values()}
+
+        self.assertEqual(charted, live)
+
+    async def test_an_open_fixture_leaves_the_two_agreeing(self):
+        """The walk only ever sees played matches, so the aggregate must not
+        see more: a pick on a fixture still to come used to count against the
+        live hit rate and against nothing on the chart, and the right-hand edge
+        of the chart stopped being the table underneath it."""
+        predictions = await sync_to_async(self.play)(
+            {self.alice: 6, self.bob: 0},
+            {self.alice: 0, self.bob: 6},
+        )
+        await sync_to_async(self.open_fixture)({self.alice, self.bob})
+        history = build_rank_history(predictions)
+
+        live = {
+            user.id: (rank, points, hit_rate_percent(user.pool_correct_count, user.pool_settled_count))
+            async for rank, user, points in self.pool.aget_leaderboard()
+        }
+        charted = {s.user_id: (s.rank, s.points, s.hit_rate) for s in history[-1].standings.values()}
 
         self.assertEqual(charted, live)
 

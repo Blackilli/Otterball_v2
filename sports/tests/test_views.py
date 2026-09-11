@@ -530,6 +530,24 @@ class LeaderboardViewTests(ViewTestCase):
 
         self.assertEqual((row.picks, row.correct, row.points), (2, 1, 3))
 
+    def test_a_pick_on_a_match_still_to_come_is_not_counted_yet(self):
+        """Picks is the hit rate's denominator, so an open fixture must stay
+        out of both - otherwise the row reads "2 picks, 1 correct, 50%" while
+        half of it has not kicked off."""
+        user = self.player("player", points=3)
+        Prediction.objects.create(
+            pool=self.pool,
+            match=self.make_match(offset_hours=24, status=MatchStatus.SCHEDULED),
+            user=user,
+            predicted_outcome=MatchOutcome.HOME_WIN,
+            points_awarded=0,
+            is_processed=False,
+        )
+
+        row = self.rows()[0]
+
+        self.assertEqual((row.picks, row.correct, row.hit_rate), (1, 1, 100))
+
     def test_hit_rate_is_correct_picks_over_picks_made(self):
         user = self.player("player", points=3)
         for offset in (-6, -8, -10):
