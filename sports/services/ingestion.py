@@ -228,7 +228,9 @@ async def ingest_fifa_seasons():
 async def ingest_fifa_stages():
     async with FifaClient() as client:
         async for season_mapping in (
-            SeasonMapping.objects.select_related("season").filter(season__is_active=True).aiterator()
+            SeasonMapping.objects.select_related("season")
+            .filter(season__is_active=True, provider=SportsProvider.FIFA)
+            .aiterator()
         ):
             api_stages = [stage async for stage in client.get_stages(id_season=season_mapping.external_id)]
             if not api_stages:
@@ -376,10 +378,13 @@ async def ingest_fifa_live_matches():
         mm
         async for mm in MatchMapping.objects.select_related("match")
         .filter(
-            Q(match__status=DjangoMatchStatus.LIVE)
-            | (
-                Q(match__status=DjangoMatchStatus.SCHEDULED)
-                & Q(match__kickoff__lte=timezone.now() + datetime.timedelta(minutes=15))
+            Q(provider=SportsProvider.FIFA)
+            & (
+                Q(match__status=DjangoMatchStatus.LIVE)
+                | (
+                    Q(match__status=DjangoMatchStatus.SCHEDULED)
+                    & Q(match__kickoff__lte=timezone.now() + datetime.timedelta(minutes=15))
+                )
             )
         )
         .aiterator()

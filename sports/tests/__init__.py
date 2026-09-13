@@ -73,6 +73,7 @@ from sports.services.ingestion import (
     extract_name,
     ingest_all_fifa_competitions,
     ingest_fifa_live_matches,
+    ingest_fifa_stages,
     ingest_upcoming_matches,
 )
 
@@ -302,6 +303,7 @@ class FakeFifaClient:
         self._live_matches = live_matches_by_external_id or {}
         self._matches = matches or []
         self.requested_live_match_ids = []
+        self.requested_stage_season_ids = []
 
     async def __aenter__(self):
         return self
@@ -320,6 +322,11 @@ class FakeFifaClient:
     async def get_matches(self, *args, **kwargs):
         for match in self._matches:
             yield match
+
+    async def get_stages(self, id_season, *args, **kwargs):
+        self.requested_stage_season_ids.append(id_season)
+        for stage in []:
+            yield stage
 
 
 class IngestAllFifaCompetitionsTests(TestCase):
@@ -431,6 +438,47 @@ class IngestFifaLiveMatchesTests(TestCase):
         await soon_match.arefresh_from_db()
         self.assertIsNone(soon_match.home_score)
         self.assertIsNone(soon_match.away_score)
+
+    async def test_ignores_mappings_from_other_providers(self):
+        """An NFL game carries ESPN and nflverse mappings and is just as "live"
+        by status and kickoff - sending those ids to api.fifa.com only produced
+        a validation error per game, every two minutes."""
+        await self.amake_match_with_mapping("FIFA1", status=MatchStatus.LIVE)
+        nfl_match = await Match.objects.acreate(
+            stage=self.stage,
+            home_team=self.home_team,
+            away_team=self.away_team,
+            kickoff=timezone.now() - datetime.timedelta(minutes=30),
+        )
+        await MatchMapping.objects.acreate(provider=SportsProvider.ESPN, external_id="401872926", match=nfl_match)
+        await MatchMapping.objects.acreate(
+            provider=SportsProvider.NFLVERSE, external_id="2026_01_ARI_LAC", match=nfl_match
+        )
+        fake_client = FakeFifaClient()
+
+        with patch("sports.services.ingestion.FifaClient", return_value=fake_client):
+            await ingest_fifa_live_matches()
+
+        self.assertEqual(fake_client.requested_live_match_ids, ["FIFA1"])
+
+
+class IngestFifaStagesTests(TestCase):
+    """Covers ingest_fifa_stages (sports/services/ingestion.py): only FIFA
+    seasons are walked, not every active season."""
+
+    async def test_ignores_seasons_mapped_to_other_providers(self):
+        world_cup = await Competition.objects.acreate(name="World Cup")
+        nfl = await Competition.objects.acreate(name="NFL", sport=Sport.AMERICAN_FOOTBALL)
+        fifa_season = await Season.objects.acreate(name="2026 World Cup", competition=world_cup, year=2026)
+        nfl_season = await Season.objects.acreate(name="NFL 2026", competition=nfl, year=2026)
+        await SeasonMapping.objects.acreate(provider=SportsProvider.FIFA, external_id="285023", season=fifa_season)
+        await SeasonMapping.objects.acreate(provider=SportsProvider.ESPN, external_id="2026", season=nfl_season)
+        fake_client = FakeFifaClient()
+
+        with patch("sports.services.ingestion.FifaClient", return_value=fake_client):
+            await ingest_fifa_stages()
+
+        self.assertEqual(fake_client.requested_stage_season_ids, ["285023"])
 
 
 class FifaClientQueryParamTests(TestCase):
