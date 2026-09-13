@@ -1,3 +1,4 @@
+import asyncio
 import datetime
 import re
 from io import StringIO
@@ -19,7 +20,7 @@ from discord_bot.cogs.guild_sync import GuildSyncCog
 from discord_bot.cogs.leaderboard_sync import LeaderboardSyncCog
 from discord_bot.cogs.match_ticker import MatchTickerCog
 from discord_bot.cogs.message_preview import MessagePreviewCog
-from discord_bot.cogs.poll_creation import build_poll_content, matches_needing_polls
+from discord_bot.cogs.poll_creation import build_match_poll, build_poll_content, matches_needing_polls
 from discord_bot.cogs.pool_onboarding import (
     LEADERBOARD_PLACEHOLDER,
     PoolOnboardingCog,
@@ -788,6 +789,40 @@ class StateMessageLifecycleTests(TestCase):
         texts = " ".join(text_of(channel.sent[0].kwargs["view"]))
         self.assertIn("24", texts)
         self.assertIn("<@111>", texts)
+
+    async def test_a_poll_closes_at_kickoff_rather_than_on_the_next_minute(self):
+        """Polls are created with their duration rounded up to a whole hour, so
+        Discord keeps them open past kickoff; the minute loop alone would let
+        people vote for up to a minute of the game."""
+        await Match.objects.filter(id=self.match.id).aupdate(
+            status=MatchStatus.SCHEDULED,
+            kickoff=timezone.now() + datetime.timedelta(milliseconds=100),
+            home_score=None,
+            away_score=None,
+        )
+        poll = FakeClosablePoll(answers=[FakePollAnswer(answer_id=1, voter_ids=[111])])
+        poll_message = FakePollMessage(message_id=30, poll=poll)
+        channel = RecordingChannel(channel_id=self.channel.id, messages={30: poll_message})
+        cog = MatchTickerCog(bot=FakeBot(channel=channel))
+
+        await cog._schedule_kickoff_closes()
+        self.assertFalse(poll.ended)
+        await asyncio.gather(*cog._kickoff_closers.values())
+
+        self.assertTrue(poll.ended)
+        self.assertTrue(poll_message.unpinned)
+        self.assertTrue((await ActiveMatchMessage.objects.aget(poll_message_id=30)).is_poll_finalized)
+        self.assertEqual(cog._kickoff_closers, {})
+
+    async def test_a_kickoff_past_the_next_pass_gets_no_timer(self):
+        await Match.objects.filter(id=self.match.id).aupdate(
+            status=MatchStatus.SCHEDULED, kickoff=timezone.now() + datetime.timedelta(hours=1)
+        )
+        cog = MatchTickerCog(bot=FakeBot(channel=RecordingChannel(channel_id=self.channel.id)))
+
+        await cog._schedule_kickoff_closes()
+
+        self.assertEqual(cog._kickoff_closers, {})
 
     async def test_a_second_pass_does_not_repost_the_result(self):
         poll = FakeClosablePoll(answers=[FakePollAnswer(answer_id=1, voter_ids=[111])])
@@ -2804,3 +2839,13 @@ class PollContentTests(TestCase):
         self.assertIn(f"📅{FIGURE_SPACE * 3}", content)
         self.assertIn(f"⏳{FIGURE_SPACE * 3}", content)
         self.assertNotIn("  ", content)
+
+    def test_the_poll_does_not_close_before_kickoff(self):
+        """Discord drops the part-hour of a poll's duration, and the loop fires
+        seconds past the minute - so a kickoff on the hour closed an hour early."""
+        duration = datetime.timedelta(hours=48) - datetime.timedelta(seconds=2)
+
+        poll = build_match_poll(self.match, "🔴", "🟢", duration)
+
+        self.assertEqual(poll.duration, datetime.timedelta(hours=48))
+        self.assertEqual(poll._to_dict()["duration"], 48)

@@ -46,6 +46,17 @@ PUBSUB_RETRY_SECONDS = 10
 # Statuses after which nothing more will happen to the match.
 FINAL_STATUSES = (MatchStatus.FINISHED, MatchStatus.POSTPONED, MatchStatus.CANCELLED)
 
+# Polls are created with their duration rounded *up* to a whole hour (Discord
+# drops the part-hour), so Discord keeps a poll open past kickoff and closing
+# it on time is this cog's job. The minute loop alone would be up to a minute
+# late - long enough to vote having seen the opening play - so any kickoff due
+# before the loop's next pass gets a timer of its own. Two minutes covers a
+# pass that runs long.
+KICKOFF_CLOSE_WINDOW = datetime.timedelta(minutes=2)
+# Waking a moment after kickoff rather than on it, so `now >= kickoff` holds
+# when the timer fires even if the sleep comes back a hair early.
+KICKOFF_CLOSE_SLACK_SECONDS = 0.5
+
 
 class MatchTickerCog(commands.Cog):
     """One status message per poll, edited in place through the match.
@@ -73,6 +84,8 @@ class MatchTickerCog(commands.Cog):
         # ticker_message_id still unset and each post a status message, leaving
         # an orphan the database no longer points at.
         self._locks: dict[int, asyncio.Lock] = {}
+        # active_msg.id -> the task that closes its poll at kickoff.
+        self._kickoff_closers: dict[int, asyncio.Task] = {}
 
     async def cog_load(self) -> None:
         # Started here rather than in __init__ so constructing the cog does not
@@ -85,6 +98,8 @@ class MatchTickerCog(commands.Cog):
             self.state_sync_loop.cancel()
         if self.pubsub_loop.is_running():
             self.pubsub_loop.cancel()
+        for task in self._kickoff_closers.values():
+            task.cancel()
 
     # ------------------------------------------------------------------
     # Triggers
@@ -112,6 +127,42 @@ class MatchTickerCog(commands.Cog):
                 await self.sync_state_message(active_msg)
             except Exception as e:
                 logger.error(f"Failed to sync state message for match {active_msg.match_id}: {e}", exc_info=True)
+
+        await self._schedule_kickoff_closes()
+
+    async def _schedule_kickoff_closes(self) -> None:
+        """Give every poll whose kickoff falls before the next pass a timer."""
+        now = timezone.now()
+        async for row in ActiveMatchMessage.objects.filter(
+            is_poll_finalized=False,
+            match__kickoff__gt=now,
+            match__kickoff__lte=now + KICKOFF_CLOSE_WINDOW,
+        ).values("id", "match__kickoff"):
+            if row["id"] not in self._kickoff_closers:
+                self._kickoff_closers[row["id"]] = asyncio.create_task(
+                    self._close_at_kickoff(row["id"], row["match__kickoff"])
+                )
+
+    async def _close_at_kickoff(self, active_msg_id: int, kickoff: datetime.datetime) -> None:
+        try:
+            await asyncio.sleep(max(0.0, (kickoff - timezone.now()).total_seconds()) + KICKOFF_CLOSE_SLACK_SECONDS)
+            # Re-read rather than trust the scheduled kickoff: a match moved in
+            # the meantime simply finds `now >= kickoff` false and stays open.
+            active_msg = await (
+                ActiveMatchMessage.objects.filter(id=active_msg_id, is_ticker_finalized=False)
+                .select_related(
+                    "match", "match__stage", "match__home_team", "match__away_team", "pool__configuration"
+                )
+                .afirst()
+            )
+            if active_msg is not None:
+                await self.sync_state_message(active_msg)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error(f"Failed to close poll at kickoff for message {active_msg_id}: {e}", exc_info=True)
+        finally:
+            self._kickoff_closers.pop(active_msg_id, None)
 
     @staticmethod
     async def _widest_reminder_window() -> datetime.timedelta:
