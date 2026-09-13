@@ -1,7 +1,7 @@
 import datetime
 import logging
 from enum import IntEnum
-from math import floor
+from math import ceil
 
 import discord
 from discord.ext import commands, tasks
@@ -72,6 +72,18 @@ def build_poll_content(match: Match, home_emoji, away_emoji) -> str:
     return content
 
 
+def whole_hours(duration: datetime.timedelta) -> datetime.timedelta:
+    """The duration rounded *up* to a whole hour.
+
+    Discord only keeps whole hours of a poll's duration and drops the rest, and
+    the loop fires a few seconds past the minute - so a kickoff on the hour gave
+    47.999 hours, stored as 47, and the poll closed an hour before kickoff.
+    Rounding up lets it run past kickoff instead; MatchTickerCog ends it on its
+    first pass after kickoff, so it still closes on time.
+    """
+    return datetime.timedelta(hours=ceil(duration.total_seconds() / 3600))
+
+
 def build_match_poll(match: Match, home_emoji, away_emoji, duration: datetime.timedelta) -> discord.Poll | None:
     """The poll itself, or None when the stage type has no answer ordering.
 
@@ -84,7 +96,7 @@ def build_match_poll(match: Match, home_emoji, away_emoji, duration: datetime.ti
         logger.error(f"No answers found for match {match.id} in stage {match.stage.id}")
         return None
 
-    poll = discord.Poll(question=f"{match.home_team} vs. {match.away_team}", duration=duration)
+    poll = discord.Poll(question=f"{match.home_team} vs. {match.away_team}", duration=whole_hours(duration))
     for outcome in answer_order:
         match outcome:
             case None:
@@ -244,7 +256,7 @@ class PollCreationCog(commands.Cog):
                     if duration.total_seconds() < 0:
                         continue
 
-                    logger.info(f"Creating poll for {match.id} for {floor(duration.total_seconds()/60/60)} hours.")
+                    logger.info(f"Creating poll for {match.id} for {whole_hours(duration)}.")
                     poll = build_match_poll(match, home_emoji, away_emoji, duration)
                     if poll is None:
                         continue
