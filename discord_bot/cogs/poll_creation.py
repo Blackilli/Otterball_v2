@@ -11,6 +11,7 @@ from django.utils import timezone
 from discord_bot.components import FIGURE_SPACE
 from discord_bot.constants import DISCORD_POLL_ANSWER_ORDER_MAP
 from discord_bot.models import ActiveMatchMessage, DiscordGuildPool, DiscordTeamEmoji
+from otterball_v2.db import with_fresh_db_connections
 from predictions.models import MAX_POLL_LOOKAHEAD_DAYS, PoolConfiguration
 from sports.models import Match, MatchOutcome
 
@@ -135,6 +136,7 @@ class PollCreationCog(commands.Cog):
             self.poll_creation_loop.cancel()
 
     @tasks.loop(minutes=1)
+    @with_fresh_db_connections
     async def interval_sync_loop(self):
         logger.info("Initializing dynamic poll intervals from database...")
         try:
@@ -162,6 +164,7 @@ class PollCreationCog(commands.Cog):
             logger.error(f"Error loading poll creation times: {e}")
 
     @tasks.loop()
+    @with_fresh_db_connections
     async def poll_creation_loop(self):
         local_now = timezone.localtime(timezone.now())
         current_weekday = local_now.weekday()

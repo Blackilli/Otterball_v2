@@ -4,6 +4,7 @@ from typing import Any, Coroutine
 
 from celery import shared_task
 
+from otterball_v2.db import aclose_old_connections
 from sports.services.ingestion import (
     ingest_all_fifa_competitions,
     ingest_espn_nfl_infrastructure,
@@ -22,6 +23,21 @@ from sports.services.ingestion import (
 logger = logging.getLogger(__name__)
 
 
+async def _with_fresh_db_connections(coro: Coroutine[Any, Any, Any]) -> Any:
+    """Await ``coro`` between two passes of ``aclose_old_connections`` (see ``otterball_v2/db.py``).
+
+    The ingest functions query through the async ORM, whose connection lives in asgiref's executor
+    thread - not in the task's thread, which is the only one Celery's Django fixup cleans up. Without
+    this, one database restart left that connection dead and every later live sync failed with
+    "connection already closed" until the worker was restarted.
+    """
+    await aclose_old_connections()
+    try:
+        return await coro
+    finally:
+        await aclose_old_connections()
+
+
 def _run(coro: Coroutine[Any, Any, Any]) -> Any:
     """Drive one async ingestion call from a synchronous Celery task.
 
@@ -30,7 +46,7 @@ def _run(coro: Coroutine[Any, Any, Any]) -> Any:
     tasks used to do - the syncs only ever ran via the management commands,
     which wrap them the same way this does.
     """
-    return asyncio.run(coro)
+    return asyncio.run(_with_fresh_db_connections(coro))
 
 
 @shared_task(name="sports.tasks.sync_daily_infrastructure")

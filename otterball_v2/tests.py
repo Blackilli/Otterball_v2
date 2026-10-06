@@ -188,3 +188,45 @@ class CsrfTrustedOriginTests(SimpleTestCase):
 
         for origin in loaded.CSRF_TRUSTED_ORIGINS:
             self.assertIn("://", origin)
+
+
+class StaleConnectionCleanupTests(SimpleTestCase):
+    """``otterball_v2/db.py``: the async ORM's connection must be cleaned up in the thread that owns it.
+
+    After a database restart, the worker's ingestion and the bot's loops kept a dead connection in
+    asgiref's executor thread and failed with "connection already closed" until a container restart.
+    """
+
+    async def test_cleanup_runs_in_the_thread_the_async_orm_queries_from(self):
+        import threading
+
+        from asgiref.sync import sync_to_async
+
+        from otterball_v2 import db
+
+        cleanup_threads = []
+        with mock.patch.object(db, "close_old_connections", lambda: cleanup_threads.append(threading.get_ident())):
+            await db.aclose_old_connections()
+        # The async ORM runs every query through sync_to_async(thread_sensitive=True), like this call does.
+        orm_thread = await sync_to_async(threading.get_ident)()
+
+        self.assertEqual(cleanup_threads, [orm_thread])
+        self.assertNotEqual(orm_thread, threading.get_ident(), "cleanup on the event loop's thread fixes nothing")
+
+    async def test_wrapper_cleans_up_before_the_wrapped_pass_runs(self):
+        from otterball_v2 import db
+
+        events = []
+
+        @db.with_fresh_db_connections
+        async def one_pass(value):
+            events.append("pass")
+            return value * 2
+
+        with mock.patch.object(db, "close_old_connections", lambda: events.append("cleanup")):
+            result = await one_pass(21)
+
+        self.assertEqual(result, 42)
+        self.assertEqual(events, ["cleanup", "pass"])
+        self.assertEqual(one_pass.__name__, "one_pass")
+        self.assertTrue(getattr(one_pass, db.FRESH_DB_CONNECTIONS_ATTR, False))
