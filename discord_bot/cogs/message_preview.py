@@ -21,6 +21,7 @@ from discord_bot.models import (
     PreviewMessageKind,
     PreviewStatus,
 )
+from otterball_v2.db import with_fresh_db_connections
 from predictions.models import MAX_POLL_LOOKAHEAD_DAYS, PredictionPool
 
 logger = logging.getLogger(__name__)
@@ -70,6 +71,7 @@ class MessagePreviewCog(commands.Cog):
         self.preview_loop.cancel()
 
     @tasks.loop(seconds=15)
+    @with_fresh_db_connections
     async def preview_loop(self) -> None:
         pending = (
             MessagePreviewRequest.objects.filter(status=PreviewStatus.PENDING)

@@ -2849,3 +2849,40 @@ class PollContentTests(TestCase):
 
         self.assertEqual(poll.duration, datetime.timedelta(hours=48))
         self.assertEqual(poll._to_dict()["duration"], 48)
+
+
+class LoopConnectionHygieneTests(TestCase):
+    """Every ``tasks.loop`` of the bot starts its pass on a usable database connection.
+
+    The loops query through the async ORM, whose connection lives in asgiref's executor thread and is
+    never closed by anything else. After a database failover it stayed dead and the poll-creation loop
+    failed every minute for eleven hours. ``with_fresh_db_connections`` fixes that per loop, so a loop
+    added without it would bring the failure back - which is what this test is for.
+    """
+
+    def test_every_loop_cleans_up_stale_connections(self):
+        import importlib
+        import inspect
+        import pkgutil
+
+        from discord.ext import tasks
+
+        import discord_bot.cogs
+        from otterball_v2.db import FRESH_DB_CONNECTIONS_ATTR
+
+        modules = [importlib.import_module("discord_bot.bot")] + [
+            importlib.import_module(f"discord_bot.cogs.{info.name}")
+            for info in pkgutil.iter_modules(discord_bot.cogs.__path__)
+        ]
+        loops = {
+            f"{module.__name__}.{cls.__name__}.{name}": attr
+            for module in modules
+            for _, cls in inspect.getmembers(module, inspect.isclass)
+            if cls.__module__ == module.__name__
+            for name, attr in vars(cls).items()
+            if isinstance(attr, tasks.Loop)
+        }
+
+        self.assertGreaterEqual(len(loops), 8, "the loop discovery itself is broken")
+        missing = [name for name, loop in loops.items() if not getattr(loop.coro, FRESH_DB_CONNECTIONS_ATTR, False)]
+        self.assertEqual(missing, [], "add @with_fresh_db_connections below @tasks.loop(...)")

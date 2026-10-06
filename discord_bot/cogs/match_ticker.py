@@ -23,6 +23,7 @@ from discord_bot.models import (
 )
 from discord_bot.services import sync_predictions_from_poll
 from discord_bot.utils import is_container_unreachable, resolve_message_container
+from otterball_v2.db import with_fresh_db_connections
 from predictions.models import DEFAULT_REMINDER_LEAD_MINUTES, PoolConfiguration, Prediction
 from sports.models import Match, MatchStatus, Team
 from sports.schemas import MatchUpdatePayload
@@ -106,6 +107,7 @@ class MatchTickerCog(commands.Cog):
     # ------------------------------------------------------------------
 
     @tasks.loop(minutes=1.0)
+    @with_fresh_db_connections
     async def state_sync_loop(self):
         """Steady heartbeat: catches kickoffs, reminders and missed updates."""
         # Each pool sets its own reminder lead time, so the query window has to
@@ -194,6 +196,7 @@ class MatchTickerCog(commands.Cog):
         await self.bot.wait_until_ready()
 
     @tasks.loop(seconds=PUBSUB_RETRY_SECONDS)
+    @with_fresh_db_connections
     async def pubsub_loop(self):
         """Subscribe to match updates, and keep subscribing.
 
