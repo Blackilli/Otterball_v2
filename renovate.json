@@ -1,0 +1,36 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    "schedule:weekly",
+    ":maintainLockFilesWeekly",
+    ":timezone(Europe/Berlin)"
+  ],
+  "labels": ["dependencies"],
+  "pre-commit": {
+    "enabled": true
+  },
+  "packageRules": [
+    {
+      "description": "One weekly PR for every minor and patch update, across uv, Docker, compose, GitHub Actions and pre-commit hooks",
+      "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
+      "groupName": "all non-major dependencies",
+      "groupSlug": "all-minor-patch"
+    },
+    {
+      "description": "The Python base image moves with requires-python, black's and pyupgrade's targets; a new minor (3.14 -> 3.15) is a runtime upgrade, not a routine bump, so it waits for approval on the dependency dashboard",
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["python"],
+      "matchUpdateTypes": ["minor", "major"],
+      "groupName": null,
+      "dependencyDashboardApproval": true
+    },
+    {
+      "description": "A Postgres major cannot read the previous major's data directory; it needs a dump/restore or pg_upgrade, so it is never proposed automatically",
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["postgres"],
+      "matchUpdateTypes": ["major"],
+      "enabled": false
+    }
+  ]
+}
