@@ -9,6 +9,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from discord_bot.components import WelcomeView
+from discord_bot.loop_safety import survive_errors
 from discord_bot.models import DiscordGuildPool
 from otterball_v2.db import with_fresh_db_connections
 from predictions.models import DayOfWeek, PoolStageRule
@@ -220,6 +221,7 @@ class PoolOnboardingCog(commands.Cog):
         self.onboarding_loop.cancel()
 
     @tasks.loop(minutes=1)
+    @survive_errors
     @with_fresh_db_connections
     async def onboarding_loop(self) -> None:
         async for guild_pool in (

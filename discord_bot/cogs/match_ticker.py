@@ -11,9 +11,11 @@ from django.conf import settings
 from django.db.models import Max, Q
 from django.utils import timezone
 from pydantic import ValidationError
+from redis.exceptions import ConnectionError as RedisConnectionError
 from redis.exceptions import RedisError
 
 from discord_bot.components import MatchStatusView, TeamRow
+from discord_bot.loop_safety import survive_errors
 from discord_bot.models import (
     ActiveMatchMessage,
     DiscordGuildPool,
@@ -43,6 +45,15 @@ WINNER_MARKER = "\N{TROPHY}"
 # Short enough that a restarted valkey is picked up quickly, long enough that a
 # valkey that is down does not fill the log.
 PUBSUB_RETRY_SECONDS = 10
+
+# A subscription can also die without an error: when valkey's node vanished on
+# 2026-11-26 the connection kept "working" (get_message just returned nothing)
+# for four hours, no update arrived, and the bot's memory grew until it was
+# OOM-killed. So the loop pings on its own connection and resubscribes once
+# nothing - not even a pong - has come back for PUBSUB_STALE_SECONDS.
+PUBSUB_PING_SECONDS = 30
+PUBSUB_PING_TIMEOUT_SECONDS = 5
+PUBSUB_STALE_SECONDS = 90
 
 # Statuses after which nothing more will happen to the match.
 FINAL_STATUSES = (MatchStatus.FINISHED, MatchStatus.POSTPONED, MatchStatus.CANCELLED)
@@ -107,6 +118,7 @@ class MatchTickerCog(commands.Cog):
     # ------------------------------------------------------------------
 
     @tasks.loop(minutes=1.0)
+    @survive_errors
     @with_fresh_db_connections
     async def state_sync_loop(self):
         """Steady heartbeat: catches kickoffs, reminders and missed updates."""
@@ -196,6 +208,7 @@ class MatchTickerCog(commands.Cog):
         await self.bot.wait_until_ready()
 
     @tasks.loop(seconds=PUBSUB_RETRY_SECONDS)
+    @survive_errors
     @with_fresh_db_connections
     async def pubsub_loop(self):
         """Subscribe to match updates, and keep subscribing.
@@ -216,7 +229,18 @@ class MatchTickerCog(commands.Cog):
 
         try:
             await pubsub.subscribe(settings.REDIS_MATCH_UPDATE_TOPIC)
+            clock = asyncio.get_running_loop().time
+            last_heard = last_ping = clock()
             while True:
+                now = clock()
+                if now - last_heard > PUBSUB_STALE_SECONDS:
+                    raise RedisConnectionError(f"no reply on the subscription for {now - last_heard:.0f}s")
+                if now - last_ping >= PUBSUB_PING_SECONDS:
+                    # Only sends: the pong comes back through get_message below,
+                    # on the same connection as the updates.
+                    await asyncio.wait_for(pubsub.ping(), timeout=PUBSUB_PING_TIMEOUT_SECONDS)
+                    last_ping = now
+
                 message = await pubsub.get_message(
                     ignore_subscribe_messages=True,
                     timeout=1.0,
@@ -224,6 +248,10 @@ class MatchTickerCog(commands.Cog):
 
                 if not message:
                     await asyncio.sleep(0.1)
+                    continue
+
+                last_heard = clock()
+                if message["type"] == "pong":
                     continue
 
                 try:
@@ -243,6 +271,7 @@ class MatchTickerCog(commands.Cog):
         except asyncio.CancelledError:
             logger.warning("Redis subscription loop requested shutdown. Cleaning connections...")
             raise
+        # TimeoutError of a ping that could not be sent is an OSError.
         except (RedisError, OSError) as e:
             logger.error(f"Redis subscription dropped, resubscribing in {PUBSUB_RETRY_SECONDS}s: {e}")
         finally:

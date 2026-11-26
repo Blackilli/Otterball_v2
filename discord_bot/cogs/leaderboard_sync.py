@@ -5,6 +5,7 @@ import discord
 from discord.ext import commands, tasks
 from django.utils import timezone
 
+from discord_bot.loop_safety import survive_errors
 from discord_bot.models import DiscordGuildPool, DiscordProfile
 from otterball_v2.db import with_fresh_db_connections
 from predictions.models import PoolStageRule, Prediction, hit_rate_percent
@@ -184,6 +185,7 @@ class LeaderboardSyncCog(commands.Cog):
         logger.info(f"Leaderboard for Pool {guild_pool.id} updated.")
 
     @tasks.loop(seconds=30)
+    @survive_errors
     @with_fresh_db_connections
     async def leaderboard_sync_loop(self):
         async for db_guild_pool in (

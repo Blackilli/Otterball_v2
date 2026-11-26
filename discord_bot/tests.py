@@ -2886,3 +2886,163 @@ class LoopConnectionHygieneTests(TestCase):
         self.assertGreaterEqual(len(loops), 8, "the loop discovery itself is broken")
         missing = [name for name, loop in loops.items() if not getattr(loop.coro, FRESH_DB_CONNECTIONS_ATTR, False)]
         self.assertEqual(missing, [], "add @with_fresh_db_connections below @tasks.loop(...)")
+
+
+class LoopSurvivalTests(TestCase):
+    """A failing pass must not end a ``tasks.loop``.
+
+    discord.py stops a loop on any exception it does not retry itself, and a database error is not one of
+    those: on 2026-11-14 one Postgres restart stopped the leaderboard, ticker and onboarding loops for twelve
+    days while the bot looked healthy. ``survive_errors`` turns that into one logged failed pass.
+    """
+
+    def test_every_loop_survives_errors(self):
+        import importlib
+        import inspect
+        import pkgutil
+
+        from discord.ext import tasks
+
+        import discord_bot.cogs
+        from discord_bot.loop_safety import SURVIVES_ERRORS_ATTR
+
+        modules = [importlib.import_module("discord_bot.bot")] + [
+            importlib.import_module(f"discord_bot.cogs.{info.name}")
+            for info in pkgutil.iter_modules(discord_bot.cogs.__path__)
+        ]
+        loops = {
+            f"{module.__name__}.{cls.__name__}.{name}": attr
+            for module in modules
+            for _, cls in inspect.getmembers(module, inspect.isclass)
+            if cls.__module__ == module.__name__
+            for name, attr in vars(cls).items()
+            if isinstance(attr, tasks.Loop)
+        }
+
+        self.assertGreaterEqual(len(loops), 8, "the loop discovery itself is broken")
+        missing = [name for name, loop in loops.items() if not getattr(loop.coro, SURVIVES_ERRORS_ATTR, False)]
+        self.assertEqual(missing, [], "add @survive_errors directly below @tasks.loop(...)")
+
+    async def test_a_failing_pass_is_logged_and_swallowed(self):
+        from discord_bot.loop_safety import survive_errors
+
+        @survive_errors
+        async def one_pass():
+            raise RuntimeError("the database system is shutting down")
+
+        with self.assertLogs("discord_bot.loop_safety", level="ERROR") as logs:
+            result = await one_pass()
+
+        self.assertIsNone(result)
+        self.assertIn("one_pass", logs.output[0])
+        self.assertIn("the database system is shutting down", logs.output[0])
+
+    async def test_cancellation_still_stops_the_loop(self):
+        from discord_bot.loop_safety import survive_errors
+
+        @survive_errors
+        async def one_pass():
+            raise asyncio.CancelledError
+
+        with self.assertRaises(asyncio.CancelledError):
+            await one_pass()
+
+    async def test_successful_pass_returns_its_value(self):
+        from discord_bot.loop_safety import survive_errors
+
+        @survive_errors
+        async def one_pass(value):
+            return value * 2
+
+        self.assertEqual(await one_pass(21), 42)
+        self.assertEqual(one_pass.__name__, "one_pass")
+
+
+class SilentPubSubTests(TestCase):
+    """A subscription that stops answering is dropped and resubscribed, not waited on forever.
+
+    On 2026-11-26 valkey's node vanished: get_message kept returning nothing, no error was raised, no update
+    arrived for four hours and the bot's memory grew until it was OOM-killed.
+    """
+
+    class _SilentPubSub:
+        def __init__(self):
+            self.pings = 0
+            self.closed = False
+
+        async def subscribe(self, *channels):
+            pass
+
+        async def ping(self):
+            self.pings += 1
+
+        async def get_message(self, ignore_subscribe_messages=False, timeout=0.0):
+            await asyncio.sleep(0.01)
+            return None
+
+        async def aclose(self):
+            self.closed = True
+
+    class _AnsweringPubSub(_SilentPubSub):
+        """Answers every ping; stops the test by failing on the third pong."""
+
+        def __init__(self):
+            super().__init__()
+            self.pending = 0
+
+        async def ping(self):
+            await super().ping()
+            self.pending += 1
+
+        async def get_message(self, ignore_subscribe_messages=False, timeout=0.0):
+            await asyncio.sleep(0.01)
+            if self.pending:
+                self.pending -= 1
+                if self.pings >= 3:
+                    raise OSError("test done")
+                return {"type": "pong", "pattern": None, "channel": None, "data": b""}
+            return None
+
+    class _FakeRedis:
+        def __init__(self, pubsub):
+            self._pubsub = pubsub
+
+        def pubsub(self):
+            return self._pubsub
+
+        async def aclose(self):
+            pass
+
+    async def _run_one_pass(self, pubsub):
+        from unittest import mock
+
+        from discord_bot.cogs import match_ticker
+
+        cog = MatchTickerCog(bot=FakeBot())
+        with (
+            mock.patch.object(match_ticker, "PUBSUB_PING_SECONDS", 0.05),
+            mock.patch.object(match_ticker, "PUBSUB_STALE_SECONDS", 0.25),
+            mock.patch.object(match_ticker.aioredis, "from_url", lambda url: self._FakeRedis(pubsub)),
+        ):
+            with self.assertLogs("discord_bot.cogs.match_ticker", level="ERROR") as logs:
+                await asyncio.wait_for(cog.pubsub_loop.coro(cog), timeout=5)
+        return logs.output
+
+    async def test_silent_subscription_is_dropped(self):
+        pubsub = self._SilentPubSub()
+
+        output = await self._run_one_pass(pubsub)
+
+        self.assertGreaterEqual(pubsub.pings, 1)
+        self.assertTrue(pubsub.closed)
+        self.assertTrue(any("no reply on the subscription" in line for line in output), output)
+
+    async def test_answered_pings_keep_the_subscription(self):
+        pubsub = self._AnsweringPubSub()
+
+        output = await self._run_one_pass(pubsub)
+
+        # Three pings (one per ~0.11 s pass) outlast the 0.25 s stale limit only because the pongs reset it.
+        self.assertEqual(pubsub.pings, 3)
+        self.assertFalse(any("no reply on the subscription" in line for line in output), output)
+        self.assertTrue(any("test done" in line for line in output), output)
