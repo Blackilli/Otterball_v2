@@ -13,6 +13,7 @@ from discord_bot.cogs.poll_creation import (
     build_poll_content,
 )
 from discord_bot.components import ComponentGalleryView
+from discord_bot.loop_safety import survive_errors
 from discord_bot.models import (
     ActiveMatchMessage,
     DiscordProfile,
@@ -71,6 +72,7 @@ class MessagePreviewCog(commands.Cog):
         self.preview_loop.cancel()
 
     @tasks.loop(seconds=15)
+    @survive_errors
     @with_fresh_db_connections
     async def preview_loop(self) -> None:
         pending = (

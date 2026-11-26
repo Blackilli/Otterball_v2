@@ -5,6 +5,7 @@ import discord
 from discord.ext import commands, tasks
 
 from discord_bot.cogs.emoji_sync import EmojiSyncCog
+from discord_bot.loop_safety import survive_errors
 from otterball_v2.db import with_fresh_db_connections
 
 logger = logging.getLogger("discord_bot")
@@ -70,6 +71,7 @@ class OtterBallBot(commands.Bot):
         await self.tree.sync()
 
     @tasks.loop(minutes=1.0)
+    @survive_errors
     @with_fresh_db_connections
     async def bot_heartbeat_loop(self):
         self.heartbeat_file.touch(exist_ok=True)
